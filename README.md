@@ -46,25 +46,30 @@
 - 智能提示词构建：自动三层融合（动作 + 镜头语言 + 对白唇形同步）
 - 首帧图网格拼接（N×N 策略）
 - Seedance 2.0 参数约束自动校验（≤9图 + ≤3视频 + ≤3音频，prompt≤5000字符）
+<img width="1602" height="835" alt="1b23b9abde0cc651ecb06d49576119b" src="https://github.com/user-attachments/assets/2b5af973-98c9-4708-bf53-02d11321d86d" />
 
 ### 🎬 剧本解析引擎
 - 智能拆解剧本为场景、分镜、对白
 - 自动识别角色、场景、情绪、镜头语言
 - 支持多集/多幕剧本结构
+<img width="1384" height="835" alt="d37f36356961edcda06edee6382d2fe" src="https://github.com/user-attachments/assets/e42266c2-aaeb-4cc3-a734-65516774d495" />
 
 ### 🎭 角色一致性系统
 - **6层身份锚点**：确保同一角色在不同分镜中外观一致
 - 角色圣经 (Character Bible) 管理
 - 支持角色参考图绑定
+<img width="1384" height="835" alt="ffcddeeda0e1aa012529ed26c850a65" src="https://github.com/user-attachments/assets/763e6ced-43e2-4c7b-a5ea-b13535af5b2e" />
 
 ### 🖼️ 场景生成
 - 多视角联合图生成
 - 场景描述到视觉提示词的自动转换
+<img width="1384" height="835" alt="8a5f019882995cd573b614d1e403ab3" src="https://github.com/user-attachments/assets/f301d91e-c826-499f-b3dd-79e69613a5e8" />
 
 ### 🎞️ 专业分镜系统
 - 电影级摄影参数（景别、机位、运动方式）
 - 自动排版和导出
 - 视觉风格一键切换（2D/3D/写实/定格等）
+<img width="1602" height="835" alt="916ad7c32920260c7f3ac89fbeb8f30" src="https://github.com/user-attachments/assets/94562cee-3827-4645-82fe-2123fdd86897" />
 
 ### 🚀 批量化生产工作流
 - **一键全流程**：剧本解析 → 角色/场景生成 → 分镜切割 → 批量生图 → 批量生视频
