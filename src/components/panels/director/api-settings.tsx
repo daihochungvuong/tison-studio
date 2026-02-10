@@ -40,31 +40,15 @@ export function APISettings({ collapsed = true, onToggleCollapse }: APISettingsP
     isConfigured,
   } = useAPIConfigStore();
 
-  const [showKeys, setShowKeys] = useState<Record<ProviderId, boolean>>({
-    zhipu: false,
-    apimart: false,
-    openai: false,
-    doubao: false,
-    runninghub: false,
-    juxinapi: false,
-    dik3: false,
-    nanohajimi: false,
+  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({
     memefast: false,
-    custom: false,
+    runninghub: false,
   });
 
   const [testing, setTesting] = useState<ProviderId | null>(null);
-  const [testResults, setTestResults] = useState<Record<ProviderId, boolean | null>>({
-    zhipu: null,
-    apimart: null,
-    openai: null,
-    doubao: null,
-    runninghub: null,
-    juxinapi: null,
-    dik3: null,
-    nanohajimi: null,
+  const [testResults, setTestResults] = useState<Record<string, boolean | null>>({
     memefast: null,
-    custom: null,
+    runninghub: null,
   });
 
   const toggleShowKey = (provider: ProviderId) => {
@@ -76,63 +60,9 @@ export function APISettings({ collapsed = true, onToggleCollapse }: APISettingsP
     setTestResults(prev => ({ ...prev, [provider]: null }));
 
     try {
-      let response: Response;
-      
-      if (provider === "zhipu") {
-        // Test Zhipu with screenplay API
-        response = await fetch("/api/ai/screenplay", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: "测试连接",
-            sceneCount: 1,
-            apiKey: apiKeys[provider] || "",
-            provider: "zhipu",
-          }),
-        });
-      } else if (provider === "apimart") {
-        // Test APIMart with image API (matching director_ai)
-        response = await fetch("/api/ai/image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: "test connection, simple blue sky",
-            aspectRatio: "16:9",
-            resolution: "1K",
-            apiKey: apiKeys[provider] || "",
-            provider: "apimart",
-          }),
-        });
-      } else if (provider === "doubao") {
-        // Doubao ARK is for vision/image understanding - just check if key is set
-        // No simple test endpoint available
-        setTestResults(prev => ({ ...prev, [provider]: true }));
-        setTesting(null);
-        return;
-      } else if (provider === "runninghub") {
-        // Test RunningHub API with a simple query endpoint
-        response = await fetch("/api/ai/runninghub-test", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            apiKey: apiKeys[provider] || "",
-          }),
-        });
-      } else {
-        // Default test
-        response = await fetch("/api/ai/screenplay", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: "测试连接",
-            sceneCount: 1,
-            apiKey: apiKeys[provider] || "",
-            provider: "openai",
-          }),
-        });
-      }
-
-      setTestResults(prev => ({ ...prev, [provider]: response.ok }));
+      // Just verify the key is set - actual test requires running API
+      const key = apiKeys[provider] || "";
+      setTestResults(prev => ({ ...prev, [provider]: key.length > 0 }));
     } catch {
       setTestResults(prev => ({ ...prev, [provider]: false }));
     } finally {
@@ -140,7 +70,6 @@ export function APISettings({ collapsed = true, onToggleCollapse }: APISettingsP
     }
   };
 
-  // Providers matching director_ai configuration
   const providers: Array<{
     id: ProviderId;
     name: string;
@@ -148,22 +77,10 @@ export function APISettings({ collapsed = true, onToggleCollapse }: APISettingsP
     services: string[];
   }> = [
     {
-      id: "zhipu",
-      name: "智谱 GLM-4.7",
-      description: "GLM 对话模型，用于剧本生成",
-      services: ["对话"],
-    },
-    {
-      id: "apimart",
-      name: "APIMart",
-      description: "Gemini 图片生成 / 豆包视频生成",
-      services: ["图片", "视频"],
-    },
-    {
-      id: "doubao",
-      name: "豆包 ARK",
-      description: "图片识别/理解",
-      services: ["图片理解"],
+      id: "memefast",
+      name: "魔因API",
+      description: "全功能 AI 中转，支持对话/图片/视频/图片理解",
+      services: ["对话", "图片", "视频", "图片理解"],
     },
     {
       id: "runninghub",

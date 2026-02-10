@@ -248,16 +248,9 @@ export interface APIConfigStatus {
 // ==================== Provider Info ====================
 
 /**
- * Provider info matching OpenCut original exactly (director_ai configuration)
- * 供应商信息 - 完全与 OpenCut 原版一致
- * 
- * 只有 3 个核心供应商（来自 director_ai 配置）：
- * 1. zhipu - 智谱 GLM-4.7，用于对话/剧本 (glm-4.7, glm-4.6v 视觉)
- * 2. apimart - APIMart (https://api.apimart.ai)，用于图片和视频生成
- *    - 图片: gemini-3-pro-image-preview
- *    - 视频: doubao-seedance-1-5-pro
- *    - 聊天: gemini-2.0-flash
- * 3. doubao - 豆包 ARK，用于图片理解
+ * 供应商信息映射
+ * 1. memefast - 魔因API，全功能 AI 中转（推荐）
+ * 2. runninghub - RunningHub，视角切换/多角度生成
  */
 const PROVIDER_INFO: Record<ProviderId, { name: string; services: ServiceType[] }> = {
   memefast: { name: '魔因API', services: ['chat', 'image', 'video', 'vision'] },

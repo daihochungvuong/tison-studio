@@ -77,16 +77,8 @@ import { uploadToImageHost } from "@/lib/image-host";
 
 // Platform icon mapping
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
-  zhipu: <MessageSquare className="h-5 w-5" />,
-  apimart: <Zap className="h-5 w-5" />,
-  doubao: <ScanEye className="h-5 w-5" />,
-  runninghub: <Image className="h-5 w-5" />,
-  juxinapi: <Zap className="h-5 w-5" />,
-  dik3: <MessageSquare className="h-5 w-5" />,
-  nanohajimi: <Zap className="h-5 w-5" />,
   memefast: <Zap className="h-5 w-5" />,
-  openai: <MessageSquare className="h-5 w-5" />,
-  deepseek: <MessageSquare className="h-5 w-5" />,
+  runninghub: <Image className="h-5 w-5" />,
   custom: <Settings className="h-5 w-5" />,
 };
 

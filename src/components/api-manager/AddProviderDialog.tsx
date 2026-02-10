@@ -30,16 +30,10 @@ import { toast } from "sonner";
 import type { IProvider } from "@/lib/api-key-manager";
 
 /**
- * Platform presets - matching OpenCut original exactly (3 providers only)
- * 平台预设配置 - 完全与 OpenCut 原版一致（只有 3 个供应商）
- * 
- * 参考原版配置：
- * - api-settings.tsx: 定义 3 个 provider 及其服务
- * - route.ts: 定义具体的 API 端点和模型
- * 
- * 1. 智谱 GLM-4.7 - 对话/剧本生成 (glm-4.7 无图, glm-4.6v 有图)
- * 2. APIMart - Gemini 图片生成 (gemini-3-pro-image-preview) / 豆包视频生成 (doubao-seedance-1-5-pro)
- * 3. 豆包 ARK - 图片识别/理解
+ * 平台预设配置
+ * 1. 魔因API (memefast) - 全功能中转（推荐）
+ * 2. RunningHub - 视角切换/多角度生成
+ * 3. 自定义 - OpenAI 兼容 API
  */
 const PLATFORM_PRESETS: Array<{
   platform: string;
@@ -72,74 +66,12 @@ const PLATFORM_PRESETS: Array<{
     recommended: true,
   },
   {
-    platform: "zhipu",
-    name: "智谱 GLM-4.7",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    description: "GLM 对话模型，用于剧本生成",
-    services: ["对话"],
-    models: ["glm-4.7", "glm-4.6v", "cogview-3-plus", "cogvideox"],
-  },
-  {
-    platform: "apimart",
-    name: "APIMart",
-    baseUrl: "https://api.apimart.ai",
-    description: "Gemini 图片生成 / 豆包视频生成",
-    services: ["图片", "视频"],
-    models: ["gemini-3-pro-image-preview", "doubao-seedance-1-5-pro", "gemini-2.0-flash"],
-  },
-  {
-    platform: "doubao",
-    name: "豆包 ARK",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-    description: "图片识别/理解",
-    services: ["图片理解"],
-    models: ["doubao-vision"],
-  },
-  {
     platform: "runninghub",
     name: "RunningHub",
     baseUrl: "https://www.runninghub.cn/openapi/v2",
     description: "Qwen 视角切换 / 多角度生成",
     services: ["视角切换", "图生图"],
     models: ["2009613632530812930"],
-  },
-  {
-    platform: "juxinapi",
-    name: "聚鑫API",
-    baseUrl: "https://api.jxincm.cn",
-    description: "Grok 视频生成 / Gemini 图片生成",
-    services: ["视频生成", "图片生成"],
-    models: ["grok-video-3", "gemini-3-pro-image-preview"],
-  },
-  {
-    platform: "dik3",
-    name: "dik3",
-    baseUrl: "https://ai.dik3.cn",
-    description: "DeepSeek / GLM / Kimi / Qwen 多模型对话",
-    services: ["对话", "剧本分析", "推理"],
-    models: [
-      "deepseek-v3",
-      "deepseek-v3.2",
-      "deepseek-r1",
-      "glm-4.7",
-      "kimi-k2",
-      "MiniMax-M2.1",
-      "qwen3-max",
-      "qwen3-max-preview",
-    ],
-  },
-  {
-    platform: "nanohajimi",
-    name: "纳米哈基米",
-    baseUrl: "https://free.nanohajimi.mom",
-    description: "Gemini 对话 / 图片生成 / 视频生成",
-    services: ["对话", "图片生成", "视频生成"],
-    models: [
-      "gemini-3-flash-preview",
-      "gemini-3-pro-preview",
-      "gemini-imagen",
-      "gemini-veo",
-    ],
   },
   {
     platform: "custom",

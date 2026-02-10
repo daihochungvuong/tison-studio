@@ -102,12 +102,6 @@ function parseOptionKey(key: string): { platform: string; model: string } | null
 }
 
 const DEFAULT_PLATFORM_CAPABILITIES: Record<string, ModelCapability[]> = {
-  zhipu: ["text", "vision", "function_calling", "image_generation", "video_generation"],
-  apimart: ["text", "vision", "image_generation", "video_generation"],
-  doubao: ["vision"],
-  juxinapi: ["image_generation", "video_generation"],
-  dik3: ["text", "function_calling", "reasoning"],
-  nanohajimi: ["text", "vision", "image_generation", "video_generation"],
   memefast: ["text", "vision", "image_generation", "video_generation"],
   // RunningHub is used for specialized tools; do not expose it as a default vision/chat provider.
   runninghub: ["image_generation"],
