@@ -32,6 +32,8 @@ reference/
 nami-reference/
 docs/*
 !docs/images/
+!docs/WORKFLOW_GUIDE.md
+!docs/SCRIPT_FORMAT_EXAMPLE.md
 
 # Next.js cache (not used)
 .next/
