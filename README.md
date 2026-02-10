@@ -15,6 +15,7 @@
 </p>
 
 <p align="center">
+  <a href="docs/WORKFLOW_GUIDE.md"><strong>📖 工作流教程</strong></a> •
   <a href="#功能特性">功能特性</a> •
   <a href="#快速开始">快速开始</a> •
   <a href="#技术架构">技术架构</a> •
