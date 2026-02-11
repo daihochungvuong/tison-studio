@@ -47,6 +47,9 @@
 - 智能提示词构建：自动三层融合（动作 + 镜头语言 + 对白唇形同步）
 - 首帧图网格拼接（N×N 策略）
 - Seedance 2.0 参数约束自动校验（≤9图 + ≤3视频 + ≤3音频，prompt≤5000字符）
+- <img width="578" height="801" alt="eecf9d3e210cb52066025a0d1b48b54" src="https://github.com/user-attachments/assets/34b623a3-9be9-4eb5-ae52-a6a9553598ea" />
+<img width="584" height="802" alt="59e57c230f67e2c5aaa425a09332d2e" src="https://github.com/user-attachments/assets/54c6036b-c545-45c0-a32b-de71b8138484" />
+
 <img width="1602" height="835" alt="1b23b9abde0cc651ecb06d49576119b" src="https://github.com/user-attachments/assets/2b5af973-98c9-4708-bf53-02d11321d86d" />
 
 ### 🎬 剧本解析引擎
