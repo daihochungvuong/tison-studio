@@ -45,6 +45,11 @@ docs/*
 沪商通途*
 第*集*
 
+# Internal analysis docs
+S级*
+*修复方案*
+*分析报告*
+
 # Apifox / API debug files
 *.apifox.json
 

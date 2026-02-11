@@ -37,7 +37,7 @@ export interface SceneSearchResult {
 /** @deprecated 不再需要手动传递，自动从服务映射获取 */
 export interface SceneFinderOptions {
   apiKey?: string;
-  provider?: 'zhipu' | 'openai' | 'apimart';
+  provider?: string;
   baseUrl?: string;
 }
 

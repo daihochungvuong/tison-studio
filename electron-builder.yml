@@ -6,6 +6,12 @@ directories:
 files:
   - out/**/*
 
+extraResources:
+  - from: demo-data
+    to: demo-data
+    filter:
+      - "**/*"
+
 asar: true
 asarUnpack:
   - "**/*.node"

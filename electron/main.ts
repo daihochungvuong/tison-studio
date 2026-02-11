@@ -998,6 +998,71 @@ ipcMain.handle('save-file-dialog', async (_event, { localPath, defaultPath, filt
   }
 })
 
+// ==================== Demo Project Seed ====================
+
+/**
+ * Get the path to bundled demo-data.
+ * - Dev mode: {APP_ROOT}/demo-data/
+ * - Production: {resourcesPath}/demo-data/
+ */
+function getDemoDataPath(): string {
+  if (VITE_DEV_SERVER_URL) {
+    return path.join(process.env.APP_ROOT!, 'demo-data')
+  }
+  return path.join(process.resourcesPath, 'demo-data')
+}
+
+/**
+ * Recursively copy a directory.
+ * Uses fs.cpSync which is available in Node 16.7+.
+ */
+function copyDirSync(src: string, dest: string) {
+  fs.cpSync(src, dest, { recursive: true, force: false, errorOnExist: false })
+}
+
+/**
+ * Seed demo project data on first run.
+ * Checks if moyin-project-store.json exists in the project data root.
+ * If not, copies demo data (JSON + media) to the user's storage directory.
+ */
+function seedDemoProject() {
+  const projectDataRoot = getProjectDataRoot()
+  const marker = path.join(projectDataRoot, 'moyin-project-store.json')
+
+  if (fs.existsSync(marker)) {
+    // Not first run — project store already exists
+    return
+  }
+
+  const demoPath = getDemoDataPath()
+  const demoProjects = path.join(demoPath, 'projects')
+  const demoMedia = path.join(demoPath, 'media')
+
+  if (!fs.existsSync(demoProjects)) {
+    console.warn('[Seed] Demo data not found at:', demoPath)
+    return
+  }
+
+  console.log('[Seed] First run detected — seeding demo project...')
+
+  try {
+    // Copy project JSON files
+    copyDirSync(demoProjects, projectDataRoot)
+    console.log('[Seed] Copied project data to:', projectDataRoot)
+
+    // Copy media files
+    if (fs.existsSync(demoMedia)) {
+      const mediaRoot = getMediaRoot()
+      copyDirSync(demoMedia, mediaRoot)
+      console.log('[Seed] Copied media files to:', mediaRoot)
+    }
+
+    console.log('[Seed] Demo project seeded successfully.')
+  } catch (error) {
+    console.error('[Seed] Failed to seed demo project:', error)
+  }
+}
+
 // Register custom protocol for local images
 protocol.registerSchemesAsPrivileged([{
   scheme: 'local-image',
@@ -1010,6 +1075,9 @@ protocol.registerSchemesAsPrivileged([{
 }])
 
 app.whenReady().then(() => {
+  // Seed demo project on first run (before window creation)
+  seedDemoProject()
+
   scheduleAutoClean()
   // Handle local-image:// protocol
   protocol.handle('local-image', async (request) => {

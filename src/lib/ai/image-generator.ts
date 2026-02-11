@@ -51,7 +51,7 @@ const ASPECT_RATIO_DIMS: Record<string, { width: number; height: number }> = {
  */
 function needsPixelSize(model: string): boolean {
   const m = model.toLowerCase();
-  return m.includes('doubao') || m.includes('seedream') || m.includes('cogview') || m.includes('zhipu');
+  return m.includes('doubao') || m.includes('seedream') || m.includes('cogview') || false /* zhipu removed */;
 }
 
 /**

@@ -373,8 +373,8 @@ export function ScreenplayInput({ onGenerateStoryboard }: ScreenplayInputProps) 
       const bridge = await initializeWorkerBridge();
       
       // Get API key and provider
-      const chatApiKey = getApiKey('zhipu') || getApiKey('openai');
-      const chatProvider = getApiKey('zhipu') ? 'zhipu' : 'openai';
+      const chatApiKey = getApiKey('memefast');
+      const chatProvider = 'memefast';
       
       const screenplay = await bridge.generateScreenplay(fullPrompt, images, {
         aspectRatio,

@@ -16,7 +16,7 @@
 import type { SplitScene } from '@/stores/director-store';
 import type { Character } from '@/stores/character-library-store';
 import type { Scene } from '@/stores/scene-store';
-import type { ShotGroup, AssetRef, SClassAspectRatio, SClassResolution, SClassDuration } from '@/stores/sclass-store';
+import type { ShotGroup, AssetRef, AssetPurpose, SClassAspectRatio, SClassResolution, SClassDuration, EditType } from '@/stores/sclass-store';
 
 // ==================== Types ====================
 
@@ -209,12 +209,13 @@ export function collectCharacterRefs(
     refs.push({
       id: `char_${charId}`,
       type: 'image',
-      tag: `@Image`,  // tag 会在最终组装时重新编号
+      tag: `@图片`,  // tag 会在最终组装时重新编号
       localUrl: imageUrl,
       httpUrl: null,
       fileName: `${char.name}_ref.png`,
       fileSize: 0,
       duration: null,
+      purpose: 'character_ref',
     });
   }
 
@@ -239,12 +240,13 @@ export function collectSceneRefs(
       refs.push({
         id: `scene_ref_${splitScene.id}`,
         type: 'image',
-        tag: '@Image',
+        tag: '@图片',
         localUrl: splitScene.sceneReferenceImage,
         httpUrl: null,
         fileName: `scene_${splitScene.sceneName || splitScene.id}.png`,
         fileSize: 0,
         duration: null,
+        purpose: 'scene_ref',
       });
       continue;
     }
@@ -258,12 +260,13 @@ export function collectSceneRefs(
         refs.push({
           id: `scene_lib_${splitScene.sceneLibraryId}`,
           type: 'image',
-          tag: '@Image',
+          tag: '@图片',
           localUrl: sceneImg,
           httpUrl: null,
           fileName: `${sceneObj?.name || 'scene'}_ref.png`,
           fileSize: 0,
           duration: null,
+          purpose: 'scene_ref',
         });
       }
     }
@@ -283,12 +286,13 @@ export function collectFirstFrameRefs(scenes: SplitScene[]): AssetRef[] {
     refs.push({
       id: `firstframe_${scene.id}`,
       type: 'image',
-      tag: '@Image',
+      tag: '@图片',
       localUrl: imageUrl,
       httpUrl: scene.imageHttpUrl || null,
       fileName: `shot_${scene.id + 1}_frame.png`,
       fileSize: 0,
       duration: null,
+      purpose: 'first_frame',
     });
   }
   return refs;
@@ -324,9 +328,15 @@ export function collectAllRefs(
 
   if (gridImageRef) {
     // ========== 格子图模式 ==========
-    // 格子图占 1 槽，剩余 8 槽给角色引用
+    // 格子图占 1 槽，剩余给角色引用 + 场景参考图
     const remainingSlots = SEEDANCE_LIMITS.maxImages - 1;
-    images = [gridImageRef, ...charRefs.slice(0, remainingSlots)];
+    const charSlice = charRefs.slice(0, remainingSlots);
+    images = [gridImageRef, ...charSlice];
+    // 如果还有槽位，加入场景参考图
+    const usedSlots = images.length;
+    if (usedSlots < SEEDANCE_LIMITS.maxImages) {
+      images.push(...sceneRefs.slice(0, SEEDANCE_LIMITS.maxImages - usedSlots));
+    }
   } else {
     // ========== 旧版兼容模式：逐张首帧 > 角色 > 场景 ==========
     const frameRefs = collectFirstFrameRefs(scenes);
@@ -335,18 +345,18 @@ export function collectAllRefs(
   }
 
   // 5. 用户上传的视频/音频引用（已在 group 中）
-  const videos = (group.videoRefs || []).slice(0, SEEDANCE_LIMITS.maxVideos);
-  const audios = (group.audioRefs || []).slice(0, SEEDANCE_LIMITS.maxAudios);
+  const videoSlice = (group.videoRefs || []).slice(0, SEEDANCE_LIMITS.maxVideos);
+  const audioSlice = (group.audioRefs || []).slice(0, SEEDANCE_LIMITS.maxAudios);
 
-  // 6. 重新编号 tag
-  images.forEach((ref, i) => { ref.tag = `@Image${i + 1}`; });
-  videos.forEach((ref, i) => { ref.tag = `@Video${i + 1}`; });
-  audios.forEach((ref, i) => { ref.tag = `@Audio${i + 1}`; });
+  // 6. 重新编号 tag（map 创建新对象，消除副作用）
+  const taggedImages = images.map((ref, i) => ({ ...ref, tag: `@图片${i + 1}` }));
+  const taggedVideos = videoSlice.map((ref, i) => ({ ...ref, tag: `@视频${i + 1}` }));
+  const taggedAudios = audioSlice.map((ref, i) => ({ ...ref, tag: `@音频${i + 1}` }));
 
   // 7. 配额校验
-  const totalFiles = images.length + videos.length + audios.length;
+  const totalFiles = taggedImages.length + taggedVideos.length + taggedAudios.length;
   const warnings: string[] = [];
-  if (images.length >= SEEDANCE_LIMITS.maxImages) {
+  if (taggedImages.length >= SEEDANCE_LIMITS.maxImages) {
     warnings.push(`图片引用已达上限 ${SEEDANCE_LIMITS.maxImages}`);
   }
   if (totalFiles > SEEDANCE_LIMITS.maxTotalFiles) {
@@ -354,9 +364,9 @@ export function collectAllRefs(
   }
 
   return {
-    images,
-    videos,
-    audios,
+    images: taggedImages,
+    videos: taggedVideos,
+    audios: taggedAudios,
     totalFiles,
     overLimit: totalFiles > SEEDANCE_LIMITS.maxTotalFiles,
     limitWarnings: warnings,
@@ -420,10 +430,10 @@ function buildDialoguePromptPart(segments: DialogueSegment[]): string {
   if (segments.length === 0) return '';
 
   const lines = segments.map(s =>
-    `[Dialogue at ~${s.timeOffset}s] ${s.characterName}: "${s.text}" — lip-sync required, natural mouth movement`
+    `[约${s.timeOffset}s处] ${s.characterName}：「${s.text}」— 口型同步，自然口部动作`
   );
 
-  return `\n\nDialogue & Lip-Sync:\n${lines.join('\n')}`;
+  return `\n\n对白与口型同步：\n${lines.join('\n')}`;
 }
 
 // ==================== Shot Segment Building ====================
@@ -521,24 +531,49 @@ export interface BuildGroupPromptOptions {
   gridImageRef?: AssetRef | null;
 }
 
+/** purpose → 中文提示语映射 */
+const PURPOSE_PROMPT_MAP: Record<AssetPurpose, string> = {
+  character_ref: '保持角色外观一致',
+  scene_ref: '作为场景参考',
+  first_frame: '作为首帧',
+  grid_image: '为角色参考格子图，保持角色一致性',
+  camera_replicate: '精准复刻镜头运动轨迹和速度',
+  action_replicate: '复刻动作节奏和幅度',
+  effect_replicate: '复刻视觉特效和转场效果',
+  beat_sync: '作为背景音乐，视频节奏严格匹配音乐节拍',
+  bgm: '作为背景音乐参考',
+  voice_ref: '作为语音参考',
+  prev_video: '接续前段视频，保持角色和场景一致',
+  video_extend: '作为被延长的视频，平滑衔接',
+  video_edit_src: '作为被编辑的源视频',
+  general: '作为参考',
+};
+
+/** 编辑类型 → prompt 模板前缀 */
+const EDIT_TYPE_TEMPLATE: Record<EditType, string> = {
+  plot_change: '颠覆@视频1里的剧情，',
+  character_swap: '视频1中的角色换成图片中的角色，动作完全模仿原视频，',
+  attribute_modify: '将视频1中',
+  element_add: '在视频1的画面中添加',
+};
+
 /**
  * 构建组级 prompt — S级核心函数
  *
- * 输出格式：
+ * 输出格式（中文模板）：
  * ```
- * Multi-shot narrative video (3 shots, 14s total):
+ * 多镜头叙事视频（共3个镜头，总时长14s）：
  *
- * Shot 1 (0-5s): [camera movement], [action], reference: @Image1
- * Shot 2 (5-9s): [camera movement], [action], reference: @Image2
- * Shot 3 (9-14s): [camera movement], [action], reference: @Image3
+ * 镜头1 [0s-5s]「场景名」：[运镜], [动作]
+ * 镜头2 [5s-9s]「场景名」：[运镜], [动作]
  *
- * Character references: @Image4 (角色A), @Image5 (角色B)
- * Scene reference: @Image6 (教室)
+ * 角色参考：@图片4（角色A）保持角色外观一致
+ * 场景参考：@图片6 作为场景参考
  *
- * Dialogue & Lip-Sync:
- * [Dialogue at ~2s] 角色A: "台词" — lip-sync required
+ * 对白与口型同步：
+ * [约2s处] 角色A：「台词」— 口型同步，自然口部动作
  *
- * Style: cinematic, warm lighting...
+ * 风格：电影感, 暖色调...
  * ```
  */
 export function buildGroupPrompt(options: BuildGroupPromptOptions): GroupPromptResult {
@@ -552,6 +587,12 @@ export function buildGroupPrompt(options: BuildGroupPromptOptions): GroupPromptR
     enableLipSync = true,
     gridImageRef,
   } = options;
+
+  // 0. 延长/编辑模式 — 走独立分支
+  const genType = group.generationType || 'new';
+  if (genType === 'extend' || genType === 'edit') {
+    return buildExtendEditPrompt(group, scenes, characters, sceneLibrary, styleTokens);
+  }
 
   // 1. 收集所有 @引用（格子图模式或旧版模式）
   const refs = collectAllRefs(group, scenes, characters, sceneLibrary, gridImageRef);
@@ -578,84 +619,107 @@ export function buildGroupPrompt(options: BuildGroupPromptOptions): GroupPromptR
     };
   }
 
-  // 5. 自动组装 prompt
+  // 4.5 AI 校准后的 prompt 优先级在手动编辑之下、自动拼接之上
+  if (group.calibratedPrompt && group.calibrationStatus === 'done') {
+    const dialogueSegs = enableLipSync ? extractDialogueSegments(scenes, characters) : [];
+    return {
+      prompt: group.calibratedPrompt,
+      charCount: group.calibratedPrompt.length,
+      overCharLimit: group.calibratedPrompt.length > SEEDANCE_LIMITS.maxPromptChars,
+      refs,
+      shotSegments,
+      dialogueSegments: dialogueSegs,
+    };
+  }
+
+  // 5. 自动组装 prompt（中文模板）
   const promptParts: string[] = [];
 
   // 标题行
   if (gridImageRef) {
     promptParts.push(
-      `Multi-shot video from grid @Image1 (${scenes.length} shots, ${totalDuration}s total):`
+      `多镜头叙事视频，参考 @图片1 格子图（共${scenes.length}个镜头，总时长${totalDuration}s）：`
     );
   } else {
     promptParts.push(
-      `Multi-shot narrative video (${scenes.length} shots, ${totalDuration}s total):`
+      `多镜头叙事视频（共${scenes.length}个镜头，总时长${totalDuration}s）：`
     );
   }
   promptParts.push('');
 
-  // 各镜头描述：使用原始 videoPrompt，按时间线拼接
+  // 各镜头描述
   for (const seg of shotSegments) {
     const endTime = timeOffset + seg.duration;
     promptParts.push(
-      `Shot ${seg.shotIndex} [${timeOffset}s-${endTime}s] "${seg.sceneName}": ${seg.description}`
+      `镜头${seg.shotIndex} [${timeOffset}s-${endTime}s]「${seg.sceneName}」：${seg.description}`
     );
     timeOffset = endTime;
   }
 
-  // 角色引用标签
-  const charRefTags = refs.images
+  // 角色引用（基于 purpose 生成精确指令）
+  const charRefLines = refs.images
     .filter(r => r.id.startsWith('char_'))
     .map(r => {
       const charId = r.id.replace('char_', '');
       const char = characters.find(c => c.id === charId);
-      return `${r.tag} (${char?.name || 'character'})`;
+      const hint = PURPOSE_PROMPT_MAP[r.purpose || 'character_ref'];
+      return `${r.tag}（${char?.name || '角色'}）${hint}`;
     });
-  if (charRefTags.length > 0) {
+  if (charRefLines.length > 0) {
     promptParts.push('');
-    promptParts.push(`Character references: ${charRefTags.join(', ')}`);
+    promptParts.push(`角色参考：${charRefLines.join('；')}`);
   }
 
-  // 场景引用标签
-  const sceneRefTags = refs.images
+  // 场景引用
+  const sceneRefLines = refs.images
     .filter(r => r.id.startsWith('scene_'))
-    .map(r => r.tag);
-  if (sceneRefTags.length > 0) {
-    promptParts.push(`Scene references: ${sceneRefTags.join(', ')}`);
+    .map(r => {
+      const hint = PURPOSE_PROMPT_MAP[r.purpose || 'scene_ref'];
+      return `${r.tag} ${hint}`;
+    });
+  if (sceneRefLines.length > 0) {
+    promptParts.push(`场景参考：${sceneRefLines.join('；')}`);
   }
 
   // 视频引用
   if (refs.videos.length > 0) {
-    const videoTags = refs.videos.map(r => `${r.tag} (${r.fileName})`);
-    promptParts.push(`Video references: ${videoTags.join(', ')} — replicate camera movement and pacing`);
+    const videoLines = refs.videos.map(r => {
+      const hint = PURPOSE_PROMPT_MAP[r.purpose || 'camera_replicate'];
+      return `${r.tag}（${r.fileName}）${hint}`;
+    });
+    promptParts.push(`视频参考：${videoLines.join('；')}`);
   }
 
   // 音频引用
   if (refs.audios.length > 0) {
-    const audioTags = refs.audios.map(r => `${r.tag} (${r.fileName})`);
-    promptParts.push(`Audio references: ${audioTags.join(', ')} — match rhythm and mood`);
+    const audioRefLines = refs.audios.map(r => {
+      const hint = PURPOSE_PROMPT_MAP[r.purpose || 'bgm'];
+      return `${r.tag}（${r.fileName}）${hint}`;
+    });
+    promptParts.push(`音频参考：${audioRefLines.join('；')}`);
   }
 
   // 音频设计（环境音 + 音效，按镜头列出）
-  const audioLines: string[] = [];
+  const audioDesignLines: string[] = [];
   for (let i = 0; i < scenes.length; i++) {
     const s = scenes[i];
     const aParts: string[] = [];
     if (s.audioAmbientEnabled !== false && s.ambientSound?.trim()) {
-      aParts.push(`ambient: ${s.ambientSound.trim()}`);
+      aParts.push(`环境音：${s.ambientSound.trim()}`);
     }
     const sfxText = s.soundEffectText?.trim();
-    const sfxTags = s.soundEffects?.length ? s.soundEffects.join(', ') : '';
+    const sfxTags = s.soundEffects?.length ? s.soundEffects.join('、') : '';
     if (s.audioSfxEnabled !== false && (sfxText || sfxTags)) {
-      aParts.push(`sfx: ${sfxText || sfxTags}`);
+      aParts.push(`音效：${sfxText || sfxTags}`);
     }
     if (aParts.length > 0) {
-      audioLines.push(`Shot ${i + 1}: ${aParts.join('; ')}`);
+      audioDesignLines.push(`镜头${i + 1}：${aParts.join('；')}`);
     }
   }
-  if (audioLines.length > 0) {
+  if (audioDesignLines.length > 0) {
     promptParts.push('');
-    promptParts.push('Audio design:');
-    audioLines.forEach(line => promptParts.push(line));
+    promptParts.push('音频设计：');
+    promptParts.push(...audioDesignLines);
   }
 
   // 对白唇形同步
@@ -670,17 +734,17 @@ export function buildGroupPrompt(options: BuildGroupPromptOptions): GroupPromptR
   // 风格
   if (styleTokens && styleTokens.length > 0) {
     promptParts.push('');
-    promptParts.push(`Style: ${styleTokens.join(', ')}`);
+    promptParts.push(`风格：${styleTokens.join('、')}`);
   }
 
   // 宽高比提示
   if (aspectRatio) {
-    promptParts.push(`Aspect ratio: ${aspectRatio}`);
+    promptParts.push(`画幅：${aspectRatio}`);
   }
 
   // 一致性约束
   promptParts.push('');
-  promptParts.push('Maintain consistent character appearance across all shots. Smooth transitions between shots. No text or watermarks.');
+  promptParts.push('全部镜头保持角色外观一致，镜头间平滑过渡，不出现文字或水印。');
 
   const prompt = promptParts.join('\n');
 
@@ -691,6 +755,118 @@ export function buildGroupPrompt(options: BuildGroupPromptOptions): GroupPromptR
     refs,
     shotSegments,
     dialogueSegments,
+  };
+}
+
+// ==================== Extend / Edit Prompt Builder ====================
+
+/**
+ * 延长/编辑模式的 prompt 构建器
+ *
+ * 与常规多镜头叙事不同：
+ * - 不建格子图
+ * - source video 自动占据 @视频1 位
+ * - prompt 使用延长/编辑专用模板
+ */
+function buildExtendEditPrompt(
+  group: ShotGroup,
+  scenes: SplitScene[],
+  characters: Character[],
+  sceneLibrary: Scene[],
+  styleTokens?: string[],
+): GroupPromptResult {
+  // --- 收集引用（不建格子图） ---
+  // source video 占 @视频1，用户上传的 videoRefs 从 @视频2 开始
+  const sourceVideoRef: AssetRef | null = group.sourceVideoUrl ? {
+    id: 'source_video',
+    type: 'video',
+    tag: '@视频1',
+    localUrl: group.sourceVideoUrl,
+    httpUrl: group.sourceVideoUrl.startsWith('http') ? group.sourceVideoUrl : null,
+    fileName: '源视频',
+    fileSize: 0,
+    duration: null,
+    purpose: group.generationType === 'extend' ? 'video_extend' : 'video_edit_src',
+  } : null;
+
+  // 用户额外上传的视频/音频
+  const userVideoRefs = (group.videoRefs || []).slice(0, sourceVideoRef ? SEEDANCE_LIMITS.maxVideos - 1 : SEEDANCE_LIMITS.maxVideos);
+  const allVideoRefs = sourceVideoRef ? [sourceVideoRef, ...userVideoRefs] : userVideoRefs;
+  const taggedVideos = allVideoRefs.map((ref, i) => ({ ...ref, tag: `@视频${i + 1}` }));
+
+  const audioSlice = (group.audioRefs || []).slice(0, SEEDANCE_LIMITS.maxAudios);
+  const taggedAudios = audioSlice.map((ref, i) => ({ ...ref, tag: `@音频${i + 1}` }));
+
+  // 图片引用（角色参考图 + 用户额外上传）
+  const allCharIds = Array.from(new Set(scenes.flatMap(s => s.characterIds || [])));
+  const charRefs = collectCharacterRefs(allCharIds, characters);
+  const taggedImages = charRefs.slice(0, SEEDANCE_LIMITS.maxImages).map((ref, i) => ({ ...ref, tag: `@图片${i + 1}` }));
+
+  const totalFiles = taggedImages.length + taggedVideos.length + taggedAudios.length;
+  const refs: CollectedRefs = {
+    images: taggedImages,
+    videos: taggedVideos,
+    audios: taggedAudios,
+    totalFiles,
+    overLimit: totalFiles > SEEDANCE_LIMITS.maxTotalFiles,
+    limitWarnings: totalFiles > SEEDANCE_LIMITS.maxTotalFiles ? [`总文件数 ${totalFiles} 超出限制 ${SEEDANCE_LIMITS.maxTotalFiles}`] : [],
+  };
+
+  // --- 构建 prompt ---
+  // 用户手动编辑优先
+  if (group.mergedPrompt && group.mergedPrompt.trim()) {
+    return {
+      prompt: group.mergedPrompt,
+      charCount: group.mergedPrompt.length,
+      overCharLimit: group.mergedPrompt.length > SEEDANCE_LIMITS.maxPromptChars,
+      refs,
+      shotSegments: [],
+      dialogueSegments: [],
+    };
+  }
+
+  const promptParts: string[] = [];
+  const genType = group.generationType || 'new';
+
+  if (genType === 'extend') {
+    // --- 延长模式 ---
+    const direction = group.extendDirection === 'forward' ? '向前' : '';
+    const dur = group.totalDuration || 10;
+    promptParts.push(`${direction}延长${dur}s视频。`);
+  } else {
+    // --- 编辑模式 ---
+    const editType = group.editType || 'plot_change';
+    promptParts.push(EDIT_TYPE_TEMPLATE[editType]);
+  }
+
+  // 角色参考指令
+  if (taggedImages.length > 0) {
+    const charRefHints = taggedImages
+      .filter(r => r.id.startsWith('char_'))
+      .map(r => {
+        const charId = r.id.replace('char_', '');
+        const char = characters.find(c => c.id === charId);
+        return `参考${r.tag}（${char?.name || '角色'}）保持角色外观一致`;
+      });
+    if (charRefHints.length > 0) {
+      promptParts.push(charRefHints.join('；'));
+    }
+  }
+
+  // 风格
+  if (styleTokens && styleTokens.length > 0) {
+    promptParts.push(`风格：${styleTokens.join('、')}`);
+  }
+
+  const prompt = promptParts.join('\n');
+
+  return {
+    prompt,
+    charCount: prompt.length,
+    overCharLimit: prompt.length > SEEDANCE_LIMITS.maxPromptChars,
+    refs,
+    shotSegments: [],
+    dialogueSegments: [],
   };
 }
 

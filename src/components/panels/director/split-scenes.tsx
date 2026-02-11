@@ -1250,7 +1250,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   }, [splitScenes, storyboardConfig, getApiKey, concurrency, updateSplitSceneVideo]);
 
 
-  // Generate video for a single scene - directly calls APIMart API with key rotation
+  // Generate video for a single scene - directly calls API with key rotation
   const handleGenerateSingleVideo = useCallback(async (sceneId: number) => {
     const scene = splitScenes.find(s => s.id === sceneId);
     if (!scene) return;
@@ -1260,8 +1260,8 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     console.log('[SplitScenes] API Store state:', {
       providers: apiStore.providers.length,
       apiKeys: Object.keys(apiStore.apiKeys),
-      apimartKey: apiStore.apiKeys['apimart'] ? 'set' : 'not set',
-      getApiKey_apimart: apiStore.getApiKey('apimart') ? 'set' : 'not set',
+      memefastKey: apiStore.apiKeys['memefast'] ? 'set' : 'not set',
+      getApiKey_memefast: apiStore.getApiKey('memefast') ? 'set' : 'not set',
     });
 
     // Use feature router with key rotation support

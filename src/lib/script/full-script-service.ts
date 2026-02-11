@@ -47,7 +47,7 @@ export interface ImportResult {
 
 export interface GenerateShotsOptions {
   apiKey: string;
-  provider: 'zhipu' | 'openai';
+  provider: string;
   baseUrl?: string;
   styleId: string;
   targetDuration: string;
@@ -1057,7 +1057,7 @@ export async function calibrateEpisodeTitles(
 
 export interface ShotCalibrationOptions {
   apiKey: string;
-  provider: 'zhipu' | 'openai' | 'apimart' | string;  // 支持更多API
+  provider: string;
   baseUrl?: string;
   model?: string;  // 可选指定模型
   styleId?: string;  // 风格标识，影响visualPrompt生成

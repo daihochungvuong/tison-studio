@@ -267,7 +267,7 @@ export function ScriptView() {
       
       const apiKey = featureConfig?.allApiKeys?.join(',') || '';
       // 使用配置的 provider，不再硬编码
-      const provider = (featureConfig?.platform === 'zhipu' ? 'zhipu' : 'openai') as 'zhipu' | 'openai';
+      const provider = (featureConfig?.platform === 'zhipu' ? 'zhipu' : 'openai') as string;
       
       console.log('[handleGenerateEpisodeShots] apiKey length:', apiKey.length);
       console.log('[handleGenerateEpisodeShots] provider:', provider, '(from config:', featureConfig?.platform, ')');
@@ -477,7 +477,7 @@ export function ScriptView() {
       
       const options = {
         apiKey: featureConfig?.allApiKeys.join(',') || '',
-        provider: (featureConfig?.platform === 'zhipu' ? 'zhipu' : 'openai') as 'zhipu' | 'openai',
+        provider: (featureConfig?.platform === 'zhipu' ? 'zhipu' : 'openai') as string,
         styleId,
         targetDuration,
       };
@@ -1058,7 +1058,7 @@ export function ScriptView() {
       // 第一步：AI 生成剧本文本（符合导入格式）
       const generatedScript = await generateScriptFromIdea(idea, {
         apiKey: allKeysString,
-        provider: provider as 'zhipu' | 'openai',
+        provider: provider as string,
         baseUrl,
         model,
         language,
@@ -1117,7 +1117,7 @@ export function ScriptView() {
 
       const result = await parseScript(rawScript, {
         apiKey: allKeysString, // Pass all keys for rotation
-        provider: provider as 'zhipu' | 'openai',
+        provider: provider as string,
         baseUrl,
         model,
         language,
@@ -1232,7 +1232,7 @@ export function ScriptView() {
           targetData,
           {
             apiKey: allKeysString,
-            provider: provider as 'zhipu' | 'openai',
+            provider: provider as string,
             baseUrl,
             model,
             targetDuration,
@@ -1618,7 +1618,7 @@ export function ScriptView() {
         existingCharacters,
         {
           apiKey: featureConfig.allApiKeys.join(','),
-          provider: featureConfig.platform as 'zhipu' | 'openai' | 'apimart',
+          provider: featureConfig.platform as string,
           baseUrl: featureConfig.baseUrl,
         }
       );
@@ -1667,7 +1667,7 @@ export function ScriptView() {
         existingScenes,
         {
           apiKey: featureConfig.allApiKeys.join(','),
-          provider: featureConfig.platform as 'zhipu' | 'openai' | 'apimart',
+          provider: featureConfig.platform as string,
           baseUrl: featureConfig.baseUrl,
         }
       );
@@ -1718,7 +1718,7 @@ export function ScriptView() {
         episodeRawScripts,
         {
           apiKey: featureConfig.allApiKeys.join(','),
-          provider: featureConfig.platform as 'zhipu' | 'openai' | 'apimart',
+          provider: featureConfig.platform as string,
           baseUrl: featureConfig.baseUrl,
         }
       );
@@ -1809,7 +1809,7 @@ export function ScriptView() {
         episodeRawScripts,
         {
           apiKey: featureConfig.allApiKeys.join(','),
-          provider: featureConfig.platform as 'zhipu' | 'openai' | 'apimart',
+          provider: featureConfig.platform as string,
           baseUrl: featureConfig.baseUrl,
         }
       );
@@ -1874,7 +1874,7 @@ export function ScriptView() {
         duration,
         {
           apiKey: featureConfig.allApiKeys.join(','),
-          provider: featureConfig.platform as 'zhipu' | 'openai' | 'apimart',
+          provider: featureConfig.platform as string,
           baseUrl: featureConfig.baseUrl,
         }
       );
@@ -1996,7 +1996,7 @@ export function ScriptView() {
     if (!featureConfig) return null;
     return {
       apiKey: featureConfig.allApiKeys.join(','),
-      provider: featureConfig.platform as 'zhipu' | 'openai' | 'apimart',
+      provider: featureConfig.platform as string,
       baseUrl: featureConfig.baseUrl,
     };
   }, []);

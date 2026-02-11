@@ -498,9 +498,9 @@ const defaultConfig: GenerationConfig = {
   videoSize: '480p',
   sceneCount: 5,
   concurrency: 1,
-  imageProvider: 'apimart',
-  videoProvider: 'apimart',
-  chatProvider: 'zhipu',
+  imageProvider: 'memefast',
+  videoProvider: 'memefast',
+  chatProvider: 'memefast',
 };
 
 // ==================== Default Project Data ====================

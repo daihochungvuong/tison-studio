@@ -30,19 +30,12 @@ export interface IProvider {
 }
 
 /**
- * Default provider templates - matching OpenCut original exactly
- * 默认供应商模板 - 完全与 OpenCut 原版一致
+ * Default provider templates
+ * 默认供应商模板
  * 
- * 只有 3 个核心供应商（来自 director_ai 配置）：
- * 1. 智谱 GLM-4.7 - 对话/剧本分析 (glm-4.7 无图, glm-4.6v 有图)
- * 2. APIMart - Gemini 图片生成 (gemini-3-pro-image-preview) / 豆包视频生成 (doubao-seedance-1-5-pro)
- * 3. 豆包 ARK - 图片识别/理解
- * 
- * API 端点参考：
- * - 智谱: https://open.bigmodel.cn/api/paas/v4/chat/completions
- * - APIMart 图片: https://api.apimart.ai/v1/images/generations
- * - APIMart 视频: https://api.apimart.ai/v1/videos/generations
- * - APIMart 聊天: https://api.apimart.ai/v1/chat/completions
+ * 核心供应商：
+ * 1. 魔因API (memefast) - 全功能 AI 中转（推荐），支持文本/图片/视频/识图
+ * 2. RunningHub - 视角切换/多角度生成
  */
 export const DEFAULT_PROVIDERS: Omit<IProvider, 'id' | 'apiKey'>[] = [
   {

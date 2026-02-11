@@ -40,7 +40,7 @@ export type AIFeature =
 /**
  * 功能绑定配置
  * 每个功能可绑定多个供应商/模型（多选）
- * 格式: platform:model 数组，如 ['zhipu:glm-4.7', 'apimart:gemini-2.5-pro']
+ * 格式: platform:model 数组，如 ['memefast:deepseek-v3.2', 'memefast:gemini-3-pro-image-preview']
  */
 export type FeatureBindings = Record<AIFeature, string[] | null>;
 
@@ -356,11 +356,12 @@ export const useAPIConfigStore = create<APIConfigStore>()(
         if (!baseUrl) return { success: false, count: 0, error: 'Base URL 未配置' };
 
         try {
-          let modelIds: string[] = [];
+          // 用 Set 收集所有 key 的模型，自动去重
+          const allModelIds = new Set<string>();
           const isMemefast = provider.platform === 'memefast';
 
           if (isMemefast) {
-            // MemeFast: use /api/pricing_new for complete model list with type/tags metadata
+            // MemeFast: /api/pricing_new 获取全量元数据（公开接口）
             const domain = baseUrl.replace(/\/v\d+$/, '');
             const pricingUrl = `${domain}/api/pricing_new`;
 
@@ -399,51 +400,105 @@ export const useAPIConfigStore = create<APIConfigStore>()(
             set({ modelTypes: types, modelTags: tags, modelEndpointTypes: endpoints });
             console.log(`[APIConfig] Stored metadata: ${Object.keys(types).length} types, ${Object.keys(tags).length} tags`);
 
-            modelIds = data
-              .map(m => m.model_name)
-              .filter((id): id is string => typeof id === 'string' && id.length > 0);
-          } else {
-            // Standard OpenAI-compatible: /v1/models
+            // pricing_new 返回全量（公开列表），先收入
+            for (const m of data) {
+              if (typeof m.model_name === 'string' && m.model_name.length > 0) {
+                allModelIds.add(m.model_name);
+              }
+            }
+
+            // 再遍历每个 key 查 /v1/models 补充该 key 独有模型
             const modelsUrl = /\/v\d+$/.test(baseUrl)
               ? `${baseUrl}/models`
               : `${baseUrl}/v1/models`;
 
-            const response = await fetch(modelsUrl, {
-              headers: { 'Authorization': `Bearer ${keys[0]}` },
-            });
-
-            if (!response.ok) {
-              return { success: false, count: 0, error: `API 返回 ${response.status}` };
-            }
-
-            const json = await response.json();
-            const data: Array<{ id: string; [key: string]: unknown }> = json.data || json;
-            if (!Array.isArray(data) || data.length === 0) {
-              return { success: false, count: 0, error: '响应格式异常' };
-            }
-
-            // Capture endpoint_types from /v1/models
-            const endpoints: Record<string, string[]> = { ...get().modelEndpointTypes };
-            for (const m of data) {
-              if (typeof m !== 'string' && m.id && Array.isArray(m.supported_endpoint_types)) {
-                endpoints[m.id] = m.supported_endpoint_types as string[];
+            for (let ki = 0; ki < keys.length; ki++) {
+              try {
+                const resp = await fetch(modelsUrl, {
+                  headers: { 'Authorization': `Bearer ${keys[ki]}` },
+                });
+                if (!resp.ok) {
+                  console.warn(`[APIConfig] MemeFast key#${ki + 1} /v1/models returned ${resp.status}, skip`);
+                  continue;
+                }
+                const j = await resp.json();
+                const arr: Array<{ id: string; supported_endpoint_types?: string[] } | string> = j.data || j;
+                if (!Array.isArray(arr)) continue;
+                for (const m of arr) {
+                  const id = typeof m === 'string' ? m : m.id;
+                  if (typeof id === 'string' && id.length > 0) allModelIds.add(id);
+                  // 补充 endpoint_types
+                  if (typeof m !== 'string' && m.id && Array.isArray(m.supported_endpoint_types)) {
+                    endpoints[m.id] = m.supported_endpoint_types as string[];
+                  }
+                }
+                console.log(`[APIConfig] MemeFast key#${ki + 1} contributed models, total so far: ${allModelIds.size}`);
+              } catch (e) {
+                console.warn(`[APIConfig] MemeFast key#${ki + 1} /v1/models failed:`, e);
               }
             }
             set({ modelEndpointTypes: endpoints });
+          } else {
+            // Standard OpenAI-compatible: 遍历每个 key 查 /v1/models，合并去重
+            const modelsUrl = /\/v\d+$/.test(baseUrl)
+              ? `${baseUrl}/models`
+              : `${baseUrl}/v1/models`;
 
-            modelIds = data
-              .map(m => (typeof m === 'string' ? m : m.id))
-              .filter((id): id is string => typeof id === 'string' && id.length > 0);
+            const endpoints: Record<string, string[]> = { ...get().modelEndpointTypes };
+            let anySuccess = false;
+            let lastError = '';
+
+            for (let ki = 0; ki < keys.length; ki++) {
+              try {
+                const response = await fetch(modelsUrl, {
+                  headers: { 'Authorization': `Bearer ${keys[ki]}` },
+                });
+
+                if (!response.ok) {
+                  lastError = `key#${ki + 1} API 返回 ${response.status}`;
+                  console.warn(`[APIConfig] ${lastError}`);
+                  continue;
+                }
+
+                const json = await response.json();
+                const data: Array<{ id: string; [key: string]: unknown }> = json.data || json;
+                if (!Array.isArray(data) || data.length === 0) {
+                  console.warn(`[APIConfig] key#${ki + 1} returned empty model list`);
+                  continue;
+                }
+
+                anySuccess = true;
+                for (const m of data) {
+                  const id = typeof m === 'string' ? m : m.id;
+                  if (typeof id === 'string' && id.length > 0) allModelIds.add(id);
+                  // Capture endpoint_types
+                  if (typeof m !== 'string' && m.id && Array.isArray(m.supported_endpoint_types)) {
+                    endpoints[m.id] = m.supported_endpoint_types as string[];
+                  }
+                }
+                console.log(`[APIConfig] key#${ki + 1} contributed models, total so far: ${allModelIds.size}`);
+              } catch (e) {
+                lastError = `key#${ki + 1} 网络请求失败`;
+                console.warn(`[APIConfig] ${lastError}:`, e);
+              }
+            }
+
+            set({ modelEndpointTypes: endpoints });
+
+            if (!anySuccess) {
+              return { success: false, count: 0, error: lastError || 'API 返回异常' };
+            }
           }
 
+          const modelIds = Array.from(allModelIds);
           if (modelIds.length === 0) {
             return { success: false, count: 0, error: '未获取到任何模型' };
           }
 
-          // Replace provider model list with synced data (instead of merge)
+          // Replace provider model list with merged & deduped data
           get().updateProvider({ ...provider, model: modelIds });
 
-          console.log(`[APIConfig] Synced ${modelIds.length} models for ${provider.name}`);
+          console.log(`[APIConfig] Synced ${modelIds.length} models for ${provider.name} (from ${keys.length} keys)`);
           return { success: true, count: modelIds.length };
         } catch (error) {
           console.error('[APIConfig] Model sync failed:', error);
@@ -733,7 +788,7 @@ export const useAPIConfigStore = create<APIConfigStore>()(
     }),
     {
       name: 'opencut-api-config',  // localStorage key
-      version: 6,  // v6: featureBindings multi-select (string -> string[])
+      version: 7,  // v7: remove deprecated providers
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Partial<APIConfigState> & { imageHostConfig?: LegacyImageHostConfig } | undefined;
         console.log(`[APIConfig] Migrating from version ${version}`);
@@ -828,32 +883,9 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           };
         }
         
-        // v2 -> v3: Fix APIMart URL (.cn -> .ai) and update provider info
+        // v2 -> v3: Ensure providers and featureBindings exist
         if (version === 2) {
-          const providers = (state?.providers || []).map((p: IProvider) => {
-            // Fix APIMart URL: api.apimart.cn -> api.apimart.ai
-            if (p.platform === 'apimart' && p.baseUrl?.includes('apimart.cn')) {
-              console.log(`[APIConfig] Fixing APIMart URL: ${p.baseUrl} -> https://api.apimart.ai`);
-              return {
-                ...p,
-                baseUrl: 'https://api.apimart.ai',
-                model: ['gemini-3-pro-image-preview', 'doubao-seedance-1-5-pro', 'gemini-2.0-flash'],
-              };
-            }
-            // Update zhipu name and models
-            if (p.platform === 'zhipu') {
-              return {
-                ...p,
-                name: '智谱 GLM-4.7',
-                model: ['glm-4.7', 'glm-4.6v', 'cogview-3-plus', 'cogvideox'],
-              };
-            }
-            return p;
-          });
-          
-          console.log(`[APIConfig] v2->v3: Fixed provider URLs and models`);
-          
-          // Ensure featureBindings exists
+          const providers = state?.providers || [];
           const mergedBindings = { ...defaultBindings, ...(state?.featureBindings || {}) };
           
           return {
@@ -887,6 +919,41 @@ export const useAPIConfigStore = create<APIConfigStore>()(
             ...state,
             providers,
             featureBindings: mergedBindings,
+            imageHostProviders: resolveImageHostProviders(),
+          };
+        }
+        
+        // v6 -> v7: Remove deprecated providers (dik3, nanohajimi, apimart, zhipu)
+        if (version === 6) {
+          const DEPRECATED_PLATFORMS = ['dik3', 'nanohajimi', 'apimart', 'zhipu'];
+          const oldProviders: IProvider[] = state?.providers || [];
+          const cleanedProviders = oldProviders.filter(
+            (p: IProvider) => !DEPRECATED_PLATFORMS.includes(p.platform)
+          );
+          const removedCount = oldProviders.length - cleanedProviders.length;
+          if (removedCount > 0) {
+            console.log(`[APIConfig] v6->v7: Removed ${removedCount} deprecated providers`);
+          }
+          
+          // Clean featureBindings referencing deprecated providers
+          const oldBindings = state?.featureBindings || {};
+          const cleanedBindings: FeatureBindings = { ...defaultBindings };
+          for (const [key, value] of Object.entries(oldBindings)) {
+            const feature = key as AIFeature;
+            if (Array.isArray(value)) {
+              const filtered = value.filter(
+                (b: string) => !DEPRECATED_PLATFORMS.some((dp) => b.startsWith(dp + ':'))
+              );
+              cleanedBindings[feature] = filtered.length > 0 ? filtered : null;
+            } else {
+              cleanedBindings[feature] = null;
+            }
+          }
+          
+          return {
+            ...state,
+            providers: cleanedProviders,
+            featureBindings: cleanedBindings,
             imageHostProviders: resolveImageHostProviders(),
           };
         }

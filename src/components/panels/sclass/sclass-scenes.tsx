@@ -64,7 +64,7 @@ import { getFeatureConfig, getFeatureNotConfiguredMessage } from "@/lib/ai/featu
 import { submitGridImageRequest } from "@/lib/ai/image-generator";
 import { saveVideoToLocal, readImageAsBase64 } from '@/lib/image-storage';
 import { persistSceneImage } from '@/lib/utils/image-persist';
-import { callVideoGenerationApi, isContentModerationError } from '../director/use-video-generation';
+import { callVideoGenerationApi, convertToHttpUrl, isContentModerationError } from '../director/use-video-generation';
 import {
   Select,
   SelectContent,
@@ -80,10 +80,11 @@ import { generateAngleSwitch } from "@/lib/ai/runninghub-client";
 import { getAngleLabel, type HorizontalDirection, type ElevationAngle, type ShotSize } from "@/lib/ai/runninghub-angles";
 import { SClassSceneCard } from "./sclass-scene-card";
 import { ShotGroupCard } from "./shot-group";
-import { useSClassStore, useShotGroups, type SClassAspectRatio } from "@/stores/sclass-store";
+import { useSClassStore, useShotGroups, type SClassAspectRatio, type ShotGroup } from "@/stores/sclass-store";
 import { autoGroupScenes, generateGroupName } from "./auto-grouping";
 import { useSClassGeneration, type BatchGenerationProgress } from "./use-sclass-generation";
-import { ShotGroupPrompt } from "./shot-group-prompt";
+import { ExtendEditDialog, type ExtendEditMode } from "./extend-edit-dialog";
+import { runCalibration, runBatchCalibration } from "./sclass-calibrator";
 import { useSceneStore } from "@/stores/scene-store";
 import { Music } from "lucide-react";
 import { QuadGridDialog, QuadGridResultDialog, type QuadVariationType, type QuadGridResult } from "@/components/quad-grid";
@@ -161,17 +162,19 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   const trailerConfig = projectData?.trailerConfig || null;
   const trailerShotIds = trailerConfig?.shotIds || [];
   
-  // Debug: log raw data on every render
-  console.log('[SplitScenes] Raw data:', {
-    storyboardStatus,
-    splitScenesLength: splitScenes.length,
-    splitScenesIds: splitScenes.map(s => s.id),
-    trailerConfigStatus: trailerConfig?.status,
-    trailerShotIds,
-    styleTokens: storyboardConfig.styleTokens,
-    aspectRatio: storyboardConfig.aspectRatio,
-    sceneCount: storyboardConfig.sceneCount,
-  });
+  // Debug: log raw data on every render (dev only)
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[SplitScenes] Raw data:', {
+      storyboardStatus,
+      splitScenesLength: splitScenes.length,
+      splitScenesIds: splitScenes.map(s => s.id),
+      trailerConfigStatus: trailerConfig?.status,
+      trailerShotIds,
+      styleTokens: storyboardConfig.styleTokens,
+      aspectRatio: storyboardConfig.aspectRatio,
+      sceneCount: storyboardConfig.sceneCount,
+    });
+  }
   
   // 筛选预告片分镜：通过 sceneName 包含 "预告片" 关键字来识别
   const trailerScenes = useMemo(() => {
@@ -247,18 +250,26 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     generateSingleShot,
     abortGeneration: abortSClassGeneration,
     retryGroup,
+    generateChainExtension,
   } = useSClassGeneration();
   const [batchProgress, setBatchProgress] = useState<BatchGenerationProgress | null>(null);
+
+  // 延长/编辑对话框状态
+  const [extendEditOpen, setExtendEditOpen] = useState(false);
+  const [extendEditMode, setExtendEditMode] = useState<ExtendEditMode>('extend');
+  const [extendEditSourceGroup, setExtendEditSourceGroup] = useState<ShotGroup | null>(null);
 
   // 场普库
   const sceneLibrary = useSceneStore((s) => s.scenes);
   const allCharacters = useCharacterLibraryStore((s) => s.characters);
 
-  // 自动分组：当有分镜数据且尚未分组时触发
+  // 自动分组：首次全量分组 + 后续增量分组（右栏新增分镜自动追加到组）
   React.useEffect(() => {
-    if (splitScenes.length > 0 && !hasAutoGrouped) {
+    if (splitScenes.length === 0) return;
+
+    if (!hasAutoGrouped) {
+      // 首次：对所有分镜执行自动分组
       const groups = autoGroupScenes(splitScenes);
-      // 设置名称
       const named = groups.map((g, idx) => ({
         ...g,
         name: generateGroupName(g, splitScenes, idx),
@@ -266,8 +277,23 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       setShotGroups(named);
       setHasAutoGrouped(true);
       console.log('[SClassScenes] Auto-grouped:', named.length, 'groups from', splitScenes.length, 'scenes');
+      return;
     }
-  }, [splitScenes, hasAutoGrouped, setShotGroups, setHasAutoGrouped]);
+
+    // 已分组后：检测新增的未分配分镜，增量追加分组
+    const assignedIds = new Set(shotGroups.flatMap(g => g.sceneIds));
+    const unassigned = splitScenes.filter(s => !assignedIds.has(s.id));
+    if (unassigned.length > 0) {
+      const newGroups = autoGroupScenes(unassigned);
+      const existingCount = shotGroups.length;
+      const namedNew = newGroups.map((g, idx) => ({
+        ...g,
+        name: generateGroupName(g, unassigned, existingCount + idx),
+      }));
+      setShotGroups([...shotGroups, ...namedNew]);
+      console.log('[SClassScenes] Incremental grouping:', newGroups.length, 'new groups for', unassigned.length, 'new scenes');
+    }
+  }, [splitScenes, hasAutoGrouped, shotGroups, setShotGroups, setHasAutoGrouped]);
 
 
   // 构建 sceneId -> SplitScene 快速查找表
@@ -1129,8 +1155,9 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     }
   }, [storyboardImage, splitScenes, storyboardConfig, getApiKey, updateSplitSceneImagePrompt, updateSplitSceneVideoPrompt, updateSplitSceneEndFramePrompt, updateSplitSceneNeedsEndFrame]);
 
-  // Handle generate videos - serial processing based on concurrency
+  /** @deprecated 使用 S级 generateAllGroups 或 handleGenerateSingleVideo 替代 */
   const handleGenerateVideos = useCallback(async () => {
+    console.warn('[DEPRECATED] handleGenerateVideos 已废弃，请使用 S级批量生成');
     if (splitScenes.length === 0) {
       toast.error("没有可生成的分镜");
       return;
@@ -1325,8 +1352,8 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     console.log('[SplitScenes] API Store state:', {
       providers: apiStore.providers.length,
       apiKeys: Object.keys(apiStore.apiKeys),
-      apimartKey: apiStore.apiKeys['apimart'] ? 'set' : 'not set',
-      getApiKey_apimart: apiStore.getApiKey('apimart') ? 'set' : 'not set',
+      apimartKey: apiStore.apiKeys['memefast'] ? 'set' : 'not set',
+      getApiKey_apimart: apiStore.getApiKey('memefast') ? 'set' : 'not set',
     });
 
     // Use feature router with key rotation support
@@ -1480,62 +1507,6 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         return '';
       };
 
-      // Convert local/base64 image to HTTP URL for API
-      // APIMart video API requires HTTP URLs, not base64
-      const convertToHttpUrl = async (rawUrl: any): Promise<string> => {
-        const url = normalizeUrl(rawUrl);
-        if (!url) {
-          console.warn('[SplitScenes] convertToHttpUrl received invalid url:', rawUrl);
-          return '';
-        }
-        
-        // Already HTTP URL - use directly
-        if (url.startsWith('http://') || url.startsWith('https://')) {
-          console.log('[SplitScenes] Using existing HTTP URL:', url.substring(0, 60));
-          return url;
-        }
-        
-        // For base64 or local images, we need to upload to image host
-        try {
-          const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
-          
-          // Check if image host is configured
-          if (!isImageHostConfigured()) {
-            console.warn('[SplitScenes] Image host not configured. Please configure imgbb API key in settings.');
-            throw new Error('图床未配置，请在设置中配置 imgbb API Key');
-          }
-          
-          let imageData = url;
-          
-          // For local-image:// protocol, read the image first
-          if (url.startsWith('local-image://')) {
-            const fullBase64 = await readImageAsBase64(url);
-            if (!fullBase64) {
-              console.warn('[SplitScenes] Failed to read local image:', url);
-              return '';
-            }
-            imageData = fullBase64;
-          }
-          
-          // Upload to configured image host
-          console.log('[SplitScenes] Uploading image to image host...');
-          const uploadResult = await uploadToImageHost(imageData, {
-            name: `scene_${sceneId}_frame_${Date.now()}`,
-            expiration: 15552000, // 180 days
-          });
-          
-          if (uploadResult.success && uploadResult.url) {
-            console.log('[SplitScenes] Uploaded image to image host:', uploadResult.url.substring(0, 60));
-            return uploadResult.url;
-          } else {
-            console.warn('[SplitScenes] Image upload failed:', uploadResult.error);
-            throw new Error(uploadResult.error || '图片上传失败');
-          }
-        } catch (e) {
-          console.warn('[SplitScenes] Failed to upload image:', e);
-          throw e;
-        }
-      };
 
       // Build image_with_roles array
       interface ImageWithRole {
@@ -3485,17 +3456,37 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
           >单镜生成 ({splitScenes.length} 镜)</button>
         </div>
         {sclassGenMode === 'group' && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 px-2 text-xs ml-auto"
-            onClick={() => {
-              const groups = autoGroupScenes(splitScenes);
-              const named = groups.map((g, idx) => ({ ...g, name: generateGroupName(g, splitScenes, idx) }));
-              setShotGroups(named);
-              toast.success(`已重新分组：${named.length} 组`);
-            }}
-          >重新分组</Button>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={shotGroups.length === 0 || shotGroups.some(g => g.calibrationStatus === 'calibrating')}
+              onClick={async () => {
+                toast.info('开始批量 AI 校准...');
+                const { success, total } = await runBatchCalibration(splitScenes, allCharacters, sceneLibrary);
+                if (total === 0) {
+                  toast.info('没有需要校准的组');
+                } else {
+                  toast.success(`批量校准完成：${success}/${total} 组成功`);
+                }
+              }}
+            >
+              <Sparkles className="h-3 w-3 mr-1" />
+              批量校准
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => {
+                const groups = autoGroupScenes(splitScenes);
+                const named = groups.map((g, idx) => ({ ...g, name: generateGroupName(g, splitScenes, idx) }));
+                setShotGroups(named);
+                toast.success(`已重新分组：${named.length} 组`);
+              }}
+            >重新分组</Button>
+          </div>
         )}
       </div>
 
@@ -3516,6 +3507,15 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
                 isGeneratingAny={isGenerating}
                 characters={allCharacters}
                 sceneLibrary={sceneLibrary}
+                onCalibrateGroup={(groupId) => {
+                  const groupScenes = shotGroups.find(sg => sg.id === groupId)
+                    ?.sceneIds.map(id => sceneMap.get(id)).filter(Boolean) as SplitScene[] || [];
+                  runCalibration(groupId, groupScenes, allCharacters, sceneLibrary)
+                    .then(ok => {
+                      if (ok) toast.success('AI 校准完成');
+                      else toast.error('AI 校准失败');
+                    });
+                }}
                 onGenerateGroupVideo={(groupId) => {
                   const g = shotGroups.find(sg => sg.id === groupId);
                   if (g) {
@@ -3527,6 +3527,22 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
                         ));
                       }),
                     }).finally(() => setIsGenerating(false));
+                  }
+                }}
+                onExtendGroup={(groupId) => {
+                  const g = shotGroups.find(sg => sg.id === groupId);
+                  if (g) {
+                    setExtendEditMode('extend');
+                    setExtendEditSourceGroup(g);
+                    setExtendEditOpen(true);
+                  }
+                }}
+                onEditGroup={(groupId) => {
+                  const g = shotGroups.find(sg => sg.id === groupId);
+                  if (g) {
+                    setExtendEditMode('edit');
+                    setExtendEditSourceGroup(g);
+                    setExtendEditOpen(true);
                   }
                 }}
                 renderSceneCard={(scene) => (
@@ -3762,6 +3778,19 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         availableScenes={splitScenes.map(s => ({ id: s.id, label: `分镜 ${s.id + 1}` }))}
         onApply={handleApplyQuadGrid}
         onCopyToScene={handleCopyQuadGridToScene}
+      />
+
+      {/* 视频延长/编辑对话框 */}
+      <ExtendEditDialog
+        open={extendEditOpen}
+        onOpenChange={setExtendEditOpen}
+        mode={extendEditMode}
+        sourceGroup={extendEditSourceGroup}
+        isGenerating={isGenerating}
+        onConfirm={(childGroup) => {
+          setIsGenerating(true);
+          generateGroupVideo(childGroup).finally(() => setIsGenerating(false));
+        }}
       />
     </div>
   );

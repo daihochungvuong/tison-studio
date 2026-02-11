@@ -37,7 +37,7 @@ export interface CharacterSearchResult {
 /** @deprecated 不再需要手动传递，自动从服务映射获取 */
 export interface FinderOptions {
   apiKey?: string;
-  provider?: 'zhipu' | 'openai' | 'apimart';
+  provider?: string;
   baseUrl?: string;
 }
 

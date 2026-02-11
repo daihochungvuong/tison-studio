@@ -32,6 +32,9 @@ import {
   Download,
   Copy,
   ZoomIn,
+  Sparkles,
+  Timer,
+  Scissors,
 } from "lucide-react";
 import {
   Tooltip,
@@ -62,6 +65,12 @@ export interface ShotGroupCardProps {
   renderSceneCard: (scene: SplitScene) => React.ReactNode;
   /** 组级视频生成回调 */
   onGenerateGroupVideo?: (groupId: string) => void;
+  /** 组级 AI 校准回调 */
+  onCalibrateGroup?: (groupId: string) => void;
+  /** 视频延长回调 */
+  onExtendGroup?: (groupId: string) => void;
+  /** 视频编辑回调 */
+  onEditGroup?: (groupId: string) => void;
   /** 默认展开 */
   defaultExpanded?: boolean;
   /** 角色库数据（用于 @引用管理） */
@@ -80,6 +89,9 @@ export function ShotGroupCard({
   isGeneratingAny,
   renderSceneCard,
   onGenerateGroupVideo,
+  onCalibrateGroup,
+  onExtendGroup,
+  onEditGroup,
   defaultExpanded = false,
   characters = [],
   sceneLibrary = [],
@@ -119,13 +131,19 @@ export function ShotGroupCard({
   const isCompleted = group.videoStatus === "completed";
   const isFailed = group.videoStatus === "failed";
   const hasImages = scenes.some((s) => s.imageDataUrl || s.imageHttpUrl);
+  const isCalibrating = group.calibrationStatus === 'calibrating';
+  const isCalibrated = group.calibrationStatus === 'done';
+  const isCalibrationFailed = group.calibrationStatus === 'failed';
+  const isExtendChild = group.generationType === 'extend';
+  const isEditChild = group.generationType === 'edit';
+  const isChildGroup = isExtendChild || isEditChild;
 
   // 组内各镜头的时长段
   const durationSegments = useMemo(() => {
-    return scenes.map((s) => ({
+    return scenes.map((s, idx) => ({
       id: s.id,
       duration: s.duration > 0 ? s.duration : 5,
-      label: `镜头${s.id + 1}`,
+      label: `镜头${idx + 1}`,
     }));
   }, [scenes]);
 
@@ -136,6 +154,8 @@ export function ShotGroupCard({
         isOverBudget && "border-red-500/50",
         isCompleted && "border-green-500/30",
         isFailed && "border-red-500/30",
+        isExtendChild && "border-l-4 border-l-purple-500",
+        isEditChild && "border-l-4 border-l-orange-500",
       )}
     >
       {/* ========== 组头 ========== */}
@@ -157,6 +177,12 @@ export function ShotGroupCard({
         <div className="flex items-center gap-1.5 min-w-0">
           <Layers className="h-3.5 w-3.5 text-primary shrink-0" />
           <span className="text-sm font-medium truncate">{group.name}</span>
+          {isExtendChild && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded-full shrink-0">延长</span>
+          )}
+          {isEditChild && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded-full shrink-0">编辑</span>
+          )}
         </div>
 
         {/* 镜头数 */}
@@ -223,12 +249,42 @@ export function ShotGroupCard({
             <Paperclip className="h-3 w-3 mr-1" />
             @引用
           </Button>
+          {/* AI 校准按钮 */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={isCalibrated ? "outline" : "ghost"}
+                  size="sm"
+                  className={cn(
+                    "h-7 px-2 text-xs",
+                    isCalibrated && "border-purple-500/50 text-purple-600 dark:text-purple-400",
+                  )}
+                  disabled={isCalibrating || isGenerating}
+                  onClick={() => onCalibrateGroup?.(group.id)}
+                >
+                  {isCalibrating ? (
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3 w-3 mr-1" />
+                  )}
+                  {isCalibrating ? '校准中' : isCalibrated ? '已校准' : 'AI校准'}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {isCalibrated
+                  ? <p>已完成 AI 校准，点击重新校准</p>
+                  : <p>AI 分析组内镜头，生成叙事弧线、过渡设计、优化 prompt</p>
+                }
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           {/* 生成按钮 */}
           <Button
             variant={isCompleted ? "outline" : "default"}
             size="sm"
             className="h-7 px-2.5 text-xs"
-            disabled={isGeneratingAny || !hasImages || isOverBudget}
+            disabled={isGeneratingAny || (!hasImages && !isChildGroup) || isOverBudget}
             onClick={() => onGenerateGroupVideo?.(group.id)}
           >
             {isGenerating ? (
@@ -248,6 +304,45 @@ export function ShotGroupCard({
               </>
             )}
           </Button>
+          {/* 延长/编辑按钮（仅已完成的普通组显示） */}
+          {isCompleted && !isChildGroup && (
+            <>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs border-purple-500/50 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10"
+                      disabled={isGeneratingAny}
+                      onClick={() => onExtendGroup?.(group.id)}
+                    >
+                      <Timer className="h-3 w-3 mr-1" />
+                      延长
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>基于当前视频继续延长，可向后或向前拓展</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs border-orange-500/50 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10"
+                      disabled={isGeneratingAny}
+                      onClick={() => onEditGroup?.(group.id)}
+                    >
+                      <Scissors className="h-3 w-3 mr-1" />
+                      编辑
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>对当前视频进行剧情编辑、角色替换、属性修改等</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </>
+          )}
         </div>
       </div>
 
@@ -306,6 +401,38 @@ export function ShotGroupCard({
           )}
         </div>
       </div>
+
+      {/* ========== AI 校准结果预览 ========== */}
+      {(isCalibrated || isCalibrationFailed) && (
+        <div className="px-3 py-2 border-t bg-purple-500/5 space-y-1.5">
+          {isCalibrated && group.narrativeArc && (
+            <div className="flex items-start gap-1.5">
+              <Sparkles className="h-3 w-3 text-purple-500 mt-0.5 shrink-0" />
+              <div>
+                <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400">叙事弧线</span>
+                <p className="text-xs text-muted-foreground mt-0.5">{group.narrativeArc}</p>
+              </div>
+            </div>
+          )}
+          {isCalibrated && group.transitions && group.transitions.length > 0 && (
+            <div className="flex items-start gap-1.5">
+              <ChevronRight className="h-3 w-3 text-purple-400 mt-0.5 shrink-0" />
+              <div>
+                <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400">过渡设计</span>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {group.transitions.map((t, i) => `${i + 1}→${i + 2}: ${t}`).join('；')}
+                </p>
+              </div>
+            </div>
+          )}
+          {isCalibrationFailed && group.calibrationError && (
+            <div className="flex items-start gap-1.5">
+              <AlertCircle className="h-3 w-3 text-red-500 mt-0.5 shrink-0" />
+              <span className="text-xs text-red-500">校准失败：{group.calibrationError}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ========== 生成结果区（格子图 + Prompt + 视频） ========== */}
       {(group.gridImageUrl || group.lastPrompt || group.videoUrl) && (

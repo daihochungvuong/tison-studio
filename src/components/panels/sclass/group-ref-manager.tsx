@@ -215,12 +215,13 @@ export function GroupRefManager({
         const asset: AssetRef = {
           id: `${type}_upload_${Date.now()}_${i}`,
           type,
-          tag: type === "video" ? `@Video${videoRefs.length + i + 1}` : `@Audio${audioRefs.length + i + 1}`,
+          tag: type === "video" ? `@视频${videoRefs.length + i + 1}` : `@音频${audioRefs.length + i + 1}`,
           localUrl: dataUrl,
           httpUrl: null,
           fileName: file.name,
           fileSize: file.size,
           duration: Math.round(duration * 10) / 10,
+          purpose: type === "video" ? 'camera_replicate' : 'bgm',
         };
 
         addAssetRef(group.id, asset);

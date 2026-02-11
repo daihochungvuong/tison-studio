@@ -77,6 +77,7 @@ export function useSClassGeneration() {
     updateSingleShotVideo,
     updateConfig,
     updateShotGroup,
+    addShotGroup,
   } = useSClassStore();
 
   const projectData = useActiveDirectorProject();
@@ -133,6 +134,8 @@ export function useSClassGeneration() {
         onProgress?: (progress: number) => void;
         /** 构建完格子图+prompt 后，询问用户是否继续生成视频；返回 false 则中止 */
         confirmBeforeGenerate?: () => Promise<boolean>;
+        /** 前组视频 URL（链式重试时传入，用于衔接前后组视频） */
+        prevVideoUrl?: string;
       }
     ): Promise<GroupGenerationResult> => {
       const projectId = activeProjectId;
@@ -188,7 +191,8 @@ export function useSClassGeneration() {
       });
 
       try {
-        // 4. 从组内分镜聚合音频/运镜设置
+      // 4. 从组内分镜聚合音频/运镜设置
+        const isExtendOrEdit = group.generationType === 'extend' || group.generationType === 'edit';
         const hasAnyDialogue = groupScenes.some(s => s.audioDialogueEnabled !== false && s.dialogue?.trim());
         const hasAnyAmbient = groupScenes.some(s => s.audioAmbientEnabled !== false);
         const hasAnySfx = groupScenes.some(s => s.audioSfxEnabled !== false);
@@ -202,44 +206,49 @@ export function useSClassGeneration() {
         });
 
         // 4b. 构建格子图（合并首帧 或 复用缓存）
+        // 延长/编辑组跳过格子图 — 它们的首帧参考来自 sourceVideoUrl
         let gridImageRef: AssetRef | null = null;
-        const sceneIds = group.sceneIds;
 
-        // 检查是否可复用缓存的九宫格图
-        const cachedGridUrl = sclassProjectData.lastGridImageUrl;
-        const cachedSceneIds = sclassProjectData.lastGridSceneIds;
-        const canReuseGrid = cachedGridUrl &&
-          cachedSceneIds &&
-          sceneIds.length === cachedSceneIds.length &&
-          sceneIds.every((id, i) => id === cachedSceneIds[i]);
+        if (!isExtendOrEdit) {
+          const sceneIds = group.sceneIds;
 
-        // 收集组内分镜的首帧图片
-        const firstFrameUrls = groupScenes
-          .map(s => s.imageDataUrl || s.imageHttpUrl || '')
-          .filter(Boolean);
+          // 检查是否可复用缓存的九宫格图
+          const cachedGridUrl = sclassProjectData.lastGridImageUrl;
+          const cachedSceneIds = sclassProjectData.lastGridSceneIds;
+          const canReuseGrid = cachedGridUrl &&
+            cachedSceneIds &&
+            sceneIds.length === cachedSceneIds.length &&
+            sceneIds.every((id, i) => id === cachedSceneIds[i]);
 
-        if (firstFrameUrls.length > 0) {
-          let gridDataUrl: string;
-          if (canReuseGrid) {
-            // 复用步骤③保存的原始九宫格图
-            gridDataUrl = cachedGridUrl!;
-            console.log('[SClassGen] 复用缓存九宫格图:', gridDataUrl.substring(0, 60));
-          } else {
-            // 重新合并首帧为格子图
-            gridDataUrl = await mergeToGridImage(firstFrameUrls, aspectRatio);
-            console.log('[SClassGen] 已合并', firstFrameUrls.length, '张首帧为格子图');
+          // 收集组内分镜的首帧图片
+          const firstFrameUrls = groupScenes
+            .map(s => s.imageDataUrl || s.imageHttpUrl || '')
+            .filter(Boolean);
+
+          if (firstFrameUrls.length > 0) {
+            let gridDataUrl: string;
+            if (canReuseGrid) {
+              // 复用步骤③保存的原始九宫格图
+              gridDataUrl = cachedGridUrl!;
+              console.log('[SClassGen] 复用缓存九宫格图:', gridDataUrl.substring(0, 60));
+            } else {
+              // 重新合并首帧为格子图
+              gridDataUrl = await mergeToGridImage(firstFrameUrls, aspectRatio);
+              console.log('[SClassGen] 已合并', firstFrameUrls.length, '张首帧为格子图');
+            }
+
+            gridImageRef = {
+              id: 'grid_image',
+              type: 'image',
+              tag: '@图片1',
+              localUrl: gridDataUrl,
+              httpUrl: gridDataUrl.startsWith('http') ? gridDataUrl : null,
+              fileName: 'grid_image.png',
+              fileSize: 0,
+              duration: null,
+              purpose: 'grid_image',
+            };
           }
-
-          gridImageRef = {
-            id: 'grid_image',
-            type: 'image',
-            tag: '@Image1',
-            localUrl: gridDataUrl,
-            httpUrl: gridDataUrl.startsWith('http') ? gridDataUrl : null,
-            fileName: 'grid_image.png',
-            fileSize: 0,
-            duration: null,
-          };
         }
 
         // 4c. 构建 prompt（传入格子图引用 + 风格 tokens）
@@ -291,6 +300,11 @@ export function useSClassGeneration() {
 
         // 5b. 收集视频/音频引用 → 转 HTTP URL（Seedance 2.0 多模态输入）
         const videoRefUrls: string[] = [];
+        // 前组视频衔接（链式重试时传入）— 延长/编辑组已在 refs.videos 中携带 sourceVideoUrl，跳过
+        if (!isExtendOrEdit && options?.prevVideoUrl) {
+          const prevHttpUrl = await convertToHttpUrl(options.prevVideoUrl).catch(() => "");
+          if (prevHttpUrl) videoRefUrls.push(prevHttpUrl);
+        }
         for (const vRef of promptResult.refs.videos) {
           const httpUrl = vRef.httpUrl || (await convertToHttpUrl(vRef.localUrl).catch(() => ""));
           if (httpUrl) videoRefUrls.push(httpUrl);
@@ -418,6 +432,7 @@ export function useSClassGeneration() {
       addGroupHistory,
       prepareImageUrls,
       updateShotGroup,
+      addShotGroup,
     ]
   );
 
@@ -635,9 +650,80 @@ export function useSClassGeneration() {
         videoError: null,
       });
 
-      return generateGroupVideo(group);
+      // 查找前组的 videoUrl（链式衔接）
+      let prevVideoUrl: string | undefined;
+      const allGroups = projectData.shotGroups;
+      const idx = allGroups.findIndex(g => g.id === groupId);
+      if (idx > 0 && allGroups[idx - 1].videoUrl) {
+        prevVideoUrl = allGroups[idx - 1].videoUrl!;
+      }
+
+      return generateGroupVideo(group, { prevVideoUrl });
     },
     [activeProjectId, getProjectData, updateGroupVideoStatus, generateGroupVideo]
+  );
+
+  // ========== 链式延长 ==========
+
+  /**
+   * 基于已完成组创建延长子组并生成视频
+   *
+   * @param sourceGroupId 来源组 ID（必须已完成且有 videoUrl）
+   * @param extendDuration 延长时长 (4-15s)
+   * @param direction 延长方向
+   * @param description 用户补充描述（可选）
+   */
+  const generateChainExtension = useCallback(
+    async (
+      sourceGroupId: string,
+      extendDuration: number = 10,
+      direction: 'backward' | 'forward' = 'backward',
+      description?: string,
+    ): Promise<GroupGenerationResult | null> => {
+      const projectId = activeProjectId;
+      if (!projectId) {
+        toast.error('无活跃项目');
+        return null;
+      }
+
+      const pd = getProjectData(projectId);
+      const sourceGroup = pd.shotGroups.find(g => g.id === sourceGroupId);
+      if (!sourceGroup || !sourceGroup.videoUrl) {
+        toast.error('源组无已完成视频，无法延长');
+        return null;
+      }
+
+      // 创建延长子组
+      const childId = `extend_${Date.now()}_${sourceGroupId.substring(0, 8)}`;
+      const childGroup: ShotGroup = {
+        id: childId,
+        name: `${sourceGroup.name} - 延长`,
+        sceneIds: [...sourceGroup.sceneIds],
+        sortIndex: sourceGroup.sortIndex + 0.5,
+        totalDuration: Math.max(4, Math.min(15, extendDuration)),
+        videoStatus: 'idle',
+        videoProgress: 0,
+        videoUrl: null,
+        videoMediaId: null,
+        videoError: null,
+        gridImageUrl: null,
+        lastPrompt: null,
+        mergedPrompt: description || null,
+        history: [],
+        videoRefs: [],
+        audioRefs: [],
+        generationType: 'extend',
+        extendDirection: direction,
+        sourceGroupId,
+        sourceVideoUrl: sourceGroup.videoUrl,
+      };
+
+      addShotGroup(childGroup);
+      toast.info(`已创建延长子组「${childGroup.name}」`);
+
+      return generateGroupVideo(childGroup);
+    },
+    [activeProjectId, getProjectData, addShotGroup, generateGroupVideo]
   );
 
   return {
@@ -646,5 +732,6 @@ export function useSClassGeneration() {
     generateSingleShot,
     abortGeneration,
     retryGroup,
+    generateChainExtension,
   };
 }

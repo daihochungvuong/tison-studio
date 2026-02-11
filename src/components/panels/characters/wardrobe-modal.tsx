@@ -411,7 +411,7 @@ async function generateVariationImage(
   apiKey: string,
   referenceImage?: string,
   styleId?: string,
-  provider: string = 'apimart'
+  provider: string = 'memefast'
 ): Promise<string> {
   const stylePreset = styleId ? getStyleById(styleId) : null;
   const styleTokens = stylePreset?.prompt || 'anime style, professional quality';
@@ -460,7 +460,7 @@ async function generateVariationImage(
 }
 
 // Helper: Poll for image completion
-async function pollForImage(taskId: string, apiKey: string, provider: string = 'apimart'): Promise<string> {
+async function pollForImage(taskId: string, apiKey: string, provider: string = 'memefast'): Promise<string> {
   const maxAttempts = 60;
   const pollInterval = 2000;
 

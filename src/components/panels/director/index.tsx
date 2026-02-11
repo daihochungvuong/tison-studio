@@ -167,7 +167,7 @@ export function DirectorView() {
         throw new Error('请先在设置中配置图片生成 API');
       }
       const apiKey = featureConfig.apiKey;
-      const provider = featureConfig.platform as 'apimart' | 'zhipu' | 'nanohajimi' | 'juxinapi';
+      const provider = featureConfig.platform as string;
       const model = featureConfig.models[0]; // 获取第一个模型
       const baseUrl = featureConfig.baseUrl;
       
@@ -228,7 +228,7 @@ export function DirectorView() {
       return;
     }
     const apiKey = videoConfig.apiKey;
-    const provider = videoConfig.platform as 'apimart' | 'zhipu' | 'nanohajimi' | 'juxinapi';
+    const provider = videoConfig.platform as string;
     const model = videoConfig.models[0]; // 获取第一个模型
     const baseUrl = videoConfig.baseUrl;
     

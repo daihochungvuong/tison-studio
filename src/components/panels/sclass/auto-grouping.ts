@@ -176,15 +176,20 @@ export function generateGroupName(
 ): string {
   if (group.sceneIds.length === 0) return `第${groupIndex + 1}组`;
 
-  const first = group.sceneIds[0];
-  const last = group.sceneIds[group.sceneIds.length - 1];
-
   // 尝试使用场景名
   const sceneMap = new Map(scenes.map((s) => [s.id, s]));
-  const firstScene = sceneMap.get(first);
+  const firstScene = sceneMap.get(group.sceneIds[0]);
+
+  // 使用组内顺序编号（而非 scene.id），避免 1-based ID 导致偏移
+  const allIds = scenes.map(s => s.id);
+  const firstIdx = allIds.indexOf(group.sceneIds[0]);
+  const lastIdx = allIds.indexOf(group.sceneIds[group.sceneIds.length - 1]);
+  const firstNum = firstIdx >= 0 ? firstIdx + 1 : 1;
+  const lastNum = lastIdx >= 0 ? lastIdx + 1 : firstNum + group.sceneIds.length - 1;
+
   if (firstScene?.sceneName) {
-    return `${firstScene.sceneName} (镜头${first + 1}-${last + 1})`;
+    return `${firstScene.sceneName} (镜头${firstNum}-${lastNum})`;
   }
 
-  return `第${groupIndex + 1}组: 镜头${first + 1}-${last + 1}`;
+  return `第${groupIndex + 1}组: 镜头${firstNum}-${lastNum}`;
 }

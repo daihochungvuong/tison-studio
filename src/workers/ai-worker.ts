@@ -159,7 +159,7 @@ async function handleGenerateScreenplay(command: GenerateScreenplayCommand): Pro
     // Note: API key should be passed from main thread in config
     // The main thread gets it from useAPIConfigStore
     const apiKey = (config as any).apiKey || '';
-    const provider = (config as any).chatProvider || 'zhipu';
+    const provider = (config as any).chatProvider || 'memefast';
     const sceneCount = config.sceneCount || 5;
     
     console.log('[AI Worker] Using sceneCount:', sceneCount);
@@ -224,7 +224,7 @@ async function generateImage(
   referenceImages?: string[]
 ): Promise<string> {
   const apiKey = config.apiKey || (config as any).imageApiKey || '';
-  const provider = (config as any).imageProvider || 'apimart';
+  const provider = (config as any).imageProvider || 'memefast';
   
   if (!apiKey) {
     throw new Error('未配置图片生成 API Key');
@@ -280,7 +280,7 @@ async function generateVideo(
   referenceImages?: string[]
 ): Promise<string> {
   const apiKey = config.apiKey || (config as any).videoApiKey || '';
-  const provider = (config as any).videoProvider || 'apimart';
+  const provider = (config as any).videoProvider || 'memefast';
   
   if (!apiKey) {
     throw new Error('未配置视频生成 API Key');
@@ -584,9 +584,9 @@ async function handleExecuteScreenplay(command: { type: string; payload: { scree
   // Prepare extended config with API keys
   const extendedConfig = {
     ...config,
-    apiKey: apiKeys.apimart || '',
-    imageApiKey: apiKeys.apimart || '',
-    videoApiKey: apiKeys.apimart || '',
+    apiKey: apiKeys.memefast || '',
+    imageApiKey: apiKeys.memefast || '',
+    videoApiKey: apiKeys.memefast || '',
     mockImage,
     mockVideo,
     characterReferenceImages,
@@ -659,10 +659,10 @@ async function handleExecuteScreenplayImages(command: { type: string; payload: {
   console.log('[AI Worker] Config apiKeys:', JSON.stringify(apiKeys));
   console.log('[AI Worker] Config keys:', Object.keys(config as any));
   
-  // Validate APIMart API key (required for image generation)
-  const apimartKey = apiKeys.apimart || '';
-  if (!apimartKey && !mockImage) {
-    console.error('[AI Worker] APIMart API Key not configured');
+  // Validate API key (required for image generation)
+  const imageKey = apiKeys.memefast || '';
+  if (!imageKey && !mockImage) {
+    console.error('[AI Worker] Image API Key not configured');
     postEvent({
       type: 'ALL_IMAGES_COMPLETED',
       payload: {
@@ -670,12 +670,12 @@ async function handleExecuteScreenplayImages(command: { type: string; payload: {
         completedCount: 0,
         failedCount: screenplay.scenes.length,
         totalCount: screenplay.scenes.length,
-        error: '未配置 APIMart API Key，请在 API 设置中添加',
+        error: '未配置图片生成 API Key，请在服务映射中配置',
       },
     });
     // Also report failure for each scene
     for (const scene of screenplay.scenes) {
-      reportSceneFailed(screenplay.id, scene.sceneId, '未配置 APIMart API Key', false);
+      reportSceneFailed(screenplay.id, scene.sceneId, '未配置图片生成 API Key', false);
     }
     return;
   }
@@ -683,13 +683,13 @@ async function handleExecuteScreenplayImages(command: { type: string; payload: {
   // Get character reference images from config
   const characterReferenceImages = (config as any).characterReferenceImages || [];
   console.log(`[AI Worker] Using ${characterReferenceImages.length} character reference images`);
-  console.log(`[AI Worker] APIMart API Key: ${apimartKey ? apimartKey.substring(0, 10) + '...' : 'NOT SET'}`);
+  console.log(`[AI Worker] Image API Key: ${imageKey ? imageKey.substring(0, 10) + '...' : 'NOT SET'}`);
   
   // Prepare extended config with API keys
   const extendedConfig = {
     ...config,
-    apiKey: apimartKey,
-    imageApiKey: apimartKey,
+    apiKey: imageKey,
+    imageApiKey: imageKey,
     mockImage,
     characterReferenceImages,
   };
@@ -769,8 +769,8 @@ async function handleExecuteScreenplayVideos(command: { type: string; payload: {
   // Prepare extended config with API keys
   const extendedConfig = {
     ...config,
-    apiKey: apiKeys.apimart || '',
-    videoApiKey: apiKeys.apimart || '',
+    apiKey: apiKeys.memefast || '',
+    videoApiKey: apiKeys.memefast || '',
     mockVideo,
     characterReferenceImages,
   };

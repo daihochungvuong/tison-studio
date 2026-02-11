@@ -23,6 +23,24 @@ import { createProjectScopedStorage } from '@/lib/project-storage';
 /** @引用资产类型 */
 export type AssetType = 'image' | 'video' | 'audio';
 
+/** 素材用途（Seedance 2.0 @素材用途精确标注） */
+export type AssetPurpose =
+  | 'character_ref'     // 角色参考
+  | 'scene_ref'         // 场景参考
+  | 'first_frame'       // 首帧
+  | 'grid_image'        // 格子图
+  | 'camera_replicate'  // 运镜复刻
+  | 'action_replicate'  // 动作复刻
+  | 'effect_replicate'  // 特效复刻
+  | 'beat_sync'         // 音乐卡点
+  | 'bgm'              // 背景音乐
+  | 'voice_ref'        // 语音参考
+  | 'prev_video'       // 前组延长
+  | 'video_extend'     // 被延长的视频
+  | 'video_edit_src'   // 被编辑的源视频
+  | 'general'          // 通用参考
+;
+
 /** 视频生成状态 */
 export type VideoGenStatus = 'idle' | 'generating' | 'completed' | 'failed';
 
@@ -37,6 +55,15 @@ export type SClassDuration = 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15
 
 /** 创作模式 */
 export type SClassMode = 'storyboard' | 'free';
+
+/** 组生成类型 */
+export type GroupGenerationType = 'new' | 'extend' | 'edit';
+
+/** 延长方向 */
+export type ExtendDirection = 'forward' | 'backward';
+
+/** 编辑类型 */
+export type EditType = 'plot_change' | 'character_swap' | 'attribute_modify' | 'element_add';
 
 // ==================== Interfaces ====================
 
@@ -59,6 +86,8 @@ export interface AssetRef {
   fileSize: number;
   /** 视频/音频时长（秒），图片为 null */
   duration: number | null;
+  /** 素材用途（Seedance 2.0 @素材用途精确标注） */
+  purpose?: AssetPurpose;
 }
 
 /**
@@ -119,6 +148,32 @@ export interface ShotGroup {
   gridImageUrl: string | null;
   /** 最近一次生成使用的完整 prompt（用于复制核对） */
   lastPrompt: string | null;
+
+  // ---- 组级 AI 校准 ----
+  /** 组级叙事弧线（AI 校准产物） */
+  narrativeArc?: string;
+  /** 镜头间过渡指令，长度 = sceneIds.length - 1 */
+  transitions?: string[];
+  /** 组级音频设计（整段 15s 规划） */
+  groupAudioDesign?: string;
+  /** AI 校准后的组级 prompt（优先级：mergedPrompt > calibratedPrompt > 自动拼接） */
+  calibratedPrompt?: string;
+  /** 校准状态 */
+  calibrationStatus?: 'idle' | 'calibrating' | 'done' | 'failed';
+  /** 校准错误信息 */
+  calibrationError?: string | null;
+
+  // ---- 视频延长 & 视频编辑 ----
+  /** 组生成类型：new=全新生成, extend=延长, edit=编辑 */
+  generationType?: GroupGenerationType;
+  /** 延长方向（仅 extend 时有效） */
+  extendDirection?: ExtendDirection;
+  /** 编辑类型（仅 edit 时有效） */
+  editType?: EditType;
+  /** 来源组 ID（延长/编辑的原始视频组） */
+  sourceGroupId?: string;
+  /** 来源视频 URL（冗余存储，避免原组被删后找不到） */
+  sourceVideoUrl?: string;
 }
 
 /**

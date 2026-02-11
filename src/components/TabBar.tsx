@@ -10,7 +10,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronLeft, LayoutDashboard, Settings, Sun, Moon } from "lucide-react";
+import { ChevronLeft, LayoutDashboard, Settings, Sun, Moon, HelpCircle } from "lucide-react";
 
 export function TabBar() {
   const { activeTab, inProject, setActiveTab, setInProject } = useMediaPanelStore();
@@ -47,8 +47,24 @@ export function TabBar() {
             </Tooltip>
           </TooltipProvider>
         </nav>
-        {/* Bottom: Settings + Theme */}
+        {/* Bottom: Help + Settings + Theme */}
         <div className="mt-auto border-t border-border py-1">
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href="https://github.com/MemeCalculate/moyin-creator/blob/main/docs/WORKFLOW_GUIDE.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex flex-col items-center py-2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <HelpCircle className="h-4 w-4" />
+                  <span className="text-[8px]">帮助</span>
+                </a>
+              </TooltipTrigger>
+              <TooltipContent side="right">使用帮助</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <TooltipProvider delayDuration={300}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -143,8 +159,24 @@ export function TabBar() {
         })}
       </nav>
 
-      {/* Bottom: Settings + Theme */}
+      {/* Bottom: Help + Settings + Theme */}
       <div className="mt-auto border-t border-border py-1">
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                href="https://github.com/MemeCalculate/moyin-creator/blob/main/docs/WORKFLOW_GUIDE.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex flex-col items-center py-2 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HelpCircle className="h-4 w-4" />
+                <span className="text-[8px]">帮助</span>
+              </a>
+            </TooltipTrigger>
+            <TooltipContent side="right">使用帮助</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         {bottomNavItems.map((item) => {
           const isActive = activeTab === item.id;
           const Icon = item.icon;

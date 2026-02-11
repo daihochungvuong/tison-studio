@@ -135,7 +135,7 @@ export function GenerationProgress() {
       // Spread apiKeys to avoid zustand proxy serialization issues
       const apiKeysCopy = { ...apiKeys };
       console.log('[GenerationProgress] apiKeys from store:', apiKeysCopy);
-      console.log('[GenerationProgress] apiKeys.apimart:', apiKeysCopy?.apimart ? 'SET' : 'NOT SET');
+      console.log('[GenerationProgress] apiKeys.memefast:', apiKeysCopy?.memefast ? 'SET' : 'NOT SET');
       
       const execConfig = {
         ...config,

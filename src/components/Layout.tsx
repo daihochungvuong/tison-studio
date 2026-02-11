@@ -105,7 +105,7 @@ export function Layout() {
         <ResizablePanel defaultSize={85} minSize={50}>
           <ResizablePanelGroup direction="horizontal">
             {/* Left Panel: Content based on active tab */}
-            <ResizablePanel defaultSize={28} minSize={20} maxSize={45}>
+            <ResizablePanel defaultSize={28} minSize={20} maxSize={45} className="min-w-0">
               <div className="h-full overflow-hidden bg-panel border-r border-border">
                 {renderLeftPanel()}
               </div>
@@ -114,7 +114,7 @@ export function Layout() {
             <ResizableHandle />
 
             {/* Center: Preview */}
-            <ResizablePanel defaultSize={52} minSize={25}>
+            <ResizablePanel defaultSize={52} minSize={25} className="min-w-0">
               <div className="h-full overflow-hidden">
                 <PreviewPanel />
               </div>
@@ -123,7 +123,7 @@ export function Layout() {
             <ResizableHandle />
 
             {/* Right: Properties */}
-            <ResizablePanel defaultSize={20} minSize={12} maxSize={35}>
+            <ResizablePanel defaultSize={20} minSize={12} maxSize={35} className="min-w-0">
               <div className="h-full overflow-hidden border-l border-border">
                 {renderRightPanel()}
               </div>

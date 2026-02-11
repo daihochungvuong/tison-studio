@@ -5,7 +5,7 @@
  * Storyboard Generation Service
  * 
  * Handles the generation of storyboard contact sheet images using AI image APIs.
- * For Electron desktop app: directly calls external APIs (APIMart/Zhipu)
+ * For Electron desktop app: directly calls external APIs (MemeFast)
  */
 
 import { buildStoryboardPrompt, getDefaultNegativePrompt, type StoryboardPromptConfig, type CharacterInfo } from './prompt-builder';
@@ -23,7 +23,7 @@ export interface StoryboardGenerationConfig {
   characterDescriptions?: string[];
   characterReferenceImages?: string[];
   apiKey: string;
-  provider?: 'apimart' | 'zhipu' | 'nanohajimi' | 'juxinapi';
+  provider?: string;
   model?: string;
   baseUrl?: string;
   mockMode?: boolean;
@@ -372,7 +372,7 @@ export async function generateStoryboardImage(
     styleTokens = [],
     characterDescriptions = [],
     apiKey,
-    provider = 'apimart',
+    provider = 'memefast',
     mockMode = false,
   } = config;
 
@@ -633,7 +633,7 @@ async function pollApimartVideoTaskStatus(
 
 /**
  * Generate videos for split scenes
- * Directly calls external APIs (APIMart/Zhipu) for Electron desktop app
+ * Directly calls external APIs for Electron desktop app
  */
 export async function generateSceneVideos(
   scenes: Array<{
@@ -644,7 +644,7 @@ export async function generateSceneVideos(
   config: {
     aspectRatio: AspectRatio;
     apiKey: string;
-    provider?: 'apimart' | 'zhipu' | 'juxinapi' | 'nanohajimi';
+    provider?: string;
     model?: string;
     baseUrl?: string;
     mockMode?: boolean;
@@ -660,7 +660,7 @@ export async function generateSceneVideos(
   const {
     aspectRatio,
     apiKey,
-    provider = 'apimart',
+    provider = 'memefast',
     model,
     baseUrl,
     mockMode = false,
@@ -698,7 +698,7 @@ export async function generateSceneVideos(
 
       // Submit video generation task directly to external API
       // APIMart supports base64 data URLs directly
-      if (provider === 'apimart' || provider === 'nanohajimi') {
+      if (provider !== 'zhipu') {
         const resolvedBaseUrl = baseUrl?.replace(/\/+$/, '');
         if (!resolvedBaseUrl) {
           throw new Error('请先在设置中配置视频生成服务映射');

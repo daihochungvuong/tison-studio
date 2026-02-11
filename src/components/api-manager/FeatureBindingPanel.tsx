@@ -5,14 +5,12 @@
 
 /**
  * Feature Binding Panel (Multi-Select Mode)
- * Allows users to choose MULTIPLE API providers/models for each feature.
- * Requests will be distributed across selected models using round-robin.
- *
- * The selectable options are generated from the configured provider list,
- * so editing a provider's model list will immediately reflect here.
+ * 品牌分类模型选择 — 仿 MemeFast pricing 页面
+ * 一级：品牌 pill（带 SVG logo + 模型数）
+ * 二级：模型列表（checkbox 多选）
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAPIConfigStore, type AIFeature } from "@/stores/api-config-store";
 import { parseApiKeys, classifyModelByName, type ModelCapability } from "@/lib/api-key-manager";
 import { Label } from "@/components/ui/label";
@@ -26,13 +24,14 @@ import {
   Check,
   X,
   AlertCircle,
-  ChevronDown,
-  ChevronRight,
   ChevronUp,
+  ChevronDown,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { extractBrandFromModel, getBrandInfo } from "@/lib/brand-mapping";
+import { getBrandIcon } from "./brand-icons";
 
 /**
  * 供应商选项 - 每个功能可选的平台 + 模型
@@ -55,6 +54,8 @@ interface FeatureMeta {
   description: string;
   icon: ReactNode;
   requiredCapability?: ModelCapability;
+  /** 推荐模型提示（蓝色高亮） */
+  recommendation?: string;
 }
 
 const FEATURE_CONFIGS: FeatureMeta[] = [
@@ -71,6 +72,7 @@ const FEATURE_CONFIGS: FeatureMeta[] = [
     description: "生成角色和场景参考图",
     icon: <Image className="h-4 w-4" />,
     requiredCapability: "image_generation",
+    recommendation: "💎 推荐使用 gemini-3-pro-image-preview（Nano Banana）— 画质优秀、一致性好",
   },
   {
     key: "video_generation",
@@ -78,6 +80,7 @@ const FEATURE_CONFIGS: FeatureMeta[] = [
     description: "将图片转换为视频",
     icon: <Video className="h-4 w-4" />,
     requiredCapability: "video_generation",
+    recommendation: "🧪 测试推荐 doubao-seedream-4-5-251128 — 适合快速验证流程",
   },
   {
     key: "image_understanding",
@@ -139,6 +142,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability[]> = {
   'gemini-veo': ['video_generation'],
   'doubao-seedance-1-5-pro': ['video_generation'],
   'doubao-seedance-1-5-pro-251215': ['video_generation'],
+  'doubao-seedream-4-5-251128': ['video_generation'],
   'veo3.1': ['video_generation'],
   'sora-2-all': ['video_generation'],
   'wan2.6-i2v': ['video_generation'],
@@ -323,54 +327,35 @@ export function FeatureBindingPanel() {
     });
   };
 
-  // 按供应商分组（分级选择 UI）
-  const groupedByFeature = useMemo(() => {
-    const result: Partial<Record<AIFeature, ProviderGroup[]>> = {};
+  // 按品牌分组（品牌分类 UI）
+  const brandGroupsByFeature = useMemo(() => {
+    const result: Partial<Record<AIFeature, Array<{ brandId: string; options: ProviderOption[] }>>> = {};
 
     for (const feature of FEATURE_CONFIGS) {
       const opts = optionsByFeature[feature.key] || [];
-      const groupMap = new Map<string, ProviderGroup>();
+      const brandMap = new Map<string, ProviderOption[]>();
 
       for (const opt of opts) {
-        if (!groupMap.has(opt.platform)) {
-          groupMap.set(opt.platform, { platform: opt.platform, name: opt.name, options: [] });
-        }
-        groupMap.get(opt.platform)!.options.push(opt);
+        const brandId = extractBrandFromModel(opt.model);
+        if (!brandMap.has(brandId)) brandMap.set(brandId, []);
+        brandMap.get(brandId)!.push(opt);
       }
 
-      // 排序：魔因API 优先 → 已配置的 → 其他按名称
-      const sorted = [...groupMap.values()].sort((a, b) => {
-        if (a.platform === 'memefast') return -1;
-        if (b.platform === 'memefast') return 1;
-        const aConf = configuredPlatforms.has(a.platform);
-        const bConf = configuredPlatforms.has(b.platform);
-        if (aConf !== bConf) return aConf ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
+      // 排序：模型数多的品牌在前
+      const sorted = [...brandMap.entries()]
+        .map(([brandId, options]) => ({ brandId, options }))
+        .sort((a, b) => b.options.length - a.options.length);
 
       result[feature.key] = sorted;
     }
 
     return result;
-  }, [optionsByFeature, configuredPlatforms]);
+  }, [optionsByFeature]);
 
-  // 供应商分组展开/折叠状态
-  const [groupExpandState, setGroupExpandState] = useState<Record<string, boolean>>({});
-
-  const isGroupExpanded = (featureKey: string, platform: string): boolean => {
-    const key = `${featureKey}:${platform}`;
-    if (key in groupExpandState) return groupExpandState[key];
-    // 默认：魔因API 展开，其他折叠
-    return platform === 'memefast';
-  };
-
-  const toggleGroup = (featureKey: string, platform: string) => {
-    const key = `${featureKey}:${platform}`;
-    setGroupExpandState(prev => {
-      const currentlyExpanded = key in prev ? prev[key] : platform === 'memefast';
-      return { ...prev, [key]: !currentlyExpanded };
-    });
-  };
+  // 每个 feature 选中的品牌过滤器
+  const [selectedBrand, setSelectedBrand] = useState<Record<string, string | null>>({});
+  // 每个 feature 的搜索关键词
+  const [searchQuery, setSearchQuery] = useState<Record<string, string>>({});
 
   return (
     <div className="p-6 border border-border rounded-xl bg-card space-y-6">
@@ -460,7 +445,7 @@ export function FeatureBindingPanel() {
                 </div>
               </div>
               
-              {/* Expanded: Grouped by Provider */}
+              {/* Expanded: Brand-categorized model selection */}
               {isExpanded && (
                 <div className="px-4 pb-4 pt-0 border-t border-border/50">
                   {options.length === 0 ? (
@@ -468,61 +453,111 @@ export function FeatureBindingPanel() {
                       暂无可选模型（请先在 API 服务商里配置模型列表）
                     </p>
                   ) : (
-                    <div className="space-y-2 pt-3">
-                      <p className="text-xs text-muted-foreground mb-2">
+                    <div className="space-y-3 pt-3">
+                      <p className="text-xs text-muted-foreground">
                         可多选，请求将按轮询分配到各模型（间隔 3 秒）
                       </p>
-                      {(groupedByFeature[feature.key] || []).map((group) => {
-                        const groupExpanded = isGroupExpanded(feature.key, group.platform);
-                        const groupConfigured = isProviderConfigured(group.platform);
-                        const selectedInGroup = group.options.filter(o =>
-                          currentBindings.includes(getOptionKey(o))
-                        ).length;
+
+                      {/* 推荐模型提示 */}
+                      {feature.recommendation && (
+                        <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/30">
+                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400 leading-relaxed">
+                            {feature.recommendation}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Search */}
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                        <input
+                          type="text"
+                          placeholder="搜索模型名称..."
+                          value={searchQuery[feature.key] || ''}
+                          onChange={(e) => setSearchQuery(prev => ({ ...prev, [feature.key]: e.target.value }))}
+                          className="w-full pl-8 pr-3 py-1.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                      </div>
+
+                      {/* Brand Pills */}
+                      {(() => {
+                        const brands = brandGroupsByFeature[feature.key] || [];
+                        const activeBrand = selectedBrand[feature.key] || null;
+                        const query = (searchQuery[feature.key] || '').toLowerCase();
+
+                        // 过滤后的模型列表
+                        const filteredOptions = options.filter(o => {
+                          if (query && !o.model.toLowerCase().includes(query)) return false;
+                          if (activeBrand && extractBrandFromModel(o.model) !== activeBrand) return false;
+                          return true;
+                        });
 
                         return (
-                          <div key={group.platform} className="rounded-md border border-border/50 overflow-hidden">
-                            {/* Provider Group Header */}
-                            <div
-                              className={cn(
-                                "flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent/50 transition-colors",
-                                groupConfigured ? "bg-muted/30" : "bg-muted/10 opacity-60"
-                              )}
-                              onClick={() => toggleGroup(feature.key, group.platform)}
-                            >
-                              <div className="shrink-0">
-                                {groupExpanded ? (
-                                  <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                                )}
-                              </div>
-                              <span
+                          <>
+                            <div className="flex flex-wrap gap-1.5">
+                              {/* 全部品牌 */}
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBrand(prev => ({ ...prev, [feature.key]: null }))}
                                 className={cn(
-                                  "w-2 h-2 rounded-full shrink-0",
-                                  groupConfigured ? "bg-green-500" : "bg-gray-400"
+                                  "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                                  !activeBrand
+                                    ? "bg-primary/10 border-primary/40 text-primary"
+                                    : "bg-muted/30 border-border hover:bg-accent/50 text-muted-foreground"
                                 )}
-                              />
-                              <span className="text-sm font-medium">{group.name}</span>
-                              {group.platform === 'memefast' && (
-                                <span className="text-[10px] px-1.5 py-0.5 bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded">
-                                  推荐
+                              >
+                                全部品牌
+                                <span className={cn(
+                                  "text-[10px] px-1 py-0.5 rounded-full min-w-[18px] text-center",
+                                  !activeBrand ? "bg-primary/20" : "bg-muted"
+                                )}>
+                                  {options.length}
                                 </span>
-                              )}
-                              <span className="text-xs text-muted-foreground ml-auto">
-                                {selectedInGroup > 0 && (
-                                  <span className="text-primary mr-2">{selectedInGroup} 已选</span>
-                                )}
-                                {group.options.length} 个模型
-                              </span>
+                              </button>
+
+                              {brands.map(({ brandId, options: brandOpts }) => {
+                                const info = getBrandInfo(brandId);
+                                const isActive = activeBrand === brandId;
+                                return (
+                                  <button
+                                    key={brandId}
+                                    type="button"
+                                    onClick={() => setSelectedBrand(prev => ({
+                                      ...prev,
+                                      [feature.key]: isActive ? null : brandId,
+                                    }))}
+                                    className={cn(
+                                      "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                                      isActive
+                                        ? "bg-primary/10 border-primary/40 text-primary"
+                                        : "bg-muted/30 border-border hover:bg-accent/50 text-muted-foreground"
+                                    )}
+                                  >
+                                    <span className="shrink-0">{getBrandIcon(brandId, 14)}</span>
+                                    {info.displayName}
+                                    <span className={cn(
+                                      "text-[10px] px-1 py-0.5 rounded-full min-w-[18px] text-center",
+                                      isActive ? "bg-primary/20" : "bg-muted"
+                                    )}>
+                                      {brandOpts.length}
+                                    </span>
+                                  </button>
+                                );
+                              })}
                             </div>
 
-                            {/* Models */}
-                            {groupExpanded && (
-                              <div className="px-3 pb-2 space-y-1">
-                                {group.options.map((option) => {
+                            {/* Model List */}
+                            <div className="space-y-1 max-h-[280px] overflow-y-auto">
+                              {filteredOptions.length === 0 ? (
+                                <p className="text-xs text-muted-foreground py-2 text-center">
+                                  无匹配模型
+                                </p>
+                              ) : (
+                                filteredOptions.map((option) => {
                                   const optionKey = getOptionKey(option);
                                   const optionConfigured = isProviderConfigured(option.platform);
                                   const isSelected = currentBindings.includes(optionKey);
+                                  const brandId = extractBrandFromModel(option.model);
 
                                   return (
                                     <label
@@ -540,17 +575,21 @@ export function FeatureBindingPanel() {
                                         onCheckedChange={() => handleToggleBinding(feature, optionKey)}
                                         disabled={!optionConfigured}
                                       />
+                                      <span className="shrink-0">{getBrandIcon(brandId, 14)}</span>
                                       <span className="text-xs font-mono text-foreground">
                                         {option.model}
                                       </span>
+                                      <span className="text-[10px] text-muted-foreground ml-auto">
+                                        {option.name}
+                                      </span>
                                     </label>
                                   );
-                                })}
-                              </div>
-                            )}
-                          </div>
+                                })
+                              )}
+                            </div>
+                          </>
                         );
-                      })}
+                      })()}
                     </div>
                   )}
                 </div>

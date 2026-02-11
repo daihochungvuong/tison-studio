@@ -26,7 +26,7 @@ const DURATION_TO_SHOT_COUNT: Record<TrailerDuration, number> = {
 /** @deprecated 不再需要手动传递，自动从服务映射获取 */
 export interface TrailerGenerationOptions {
   apiKey?: string;
-  provider?: 'zhipu' | 'openai' | 'apimart' | string;
+  provider?: string;
   baseUrl?: string;
 }
 

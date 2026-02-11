@@ -17,7 +17,7 @@ const buildEndpoint = (baseUrl: string, path: string) => {
 
 export interface ShotGenerationConfig {
   apiKey: string;
-  provider?: 'apimart' | 'zhipu';
+  provider?: string;
   baseUrl: string;
   model: string;
   aspectRatio?: '16:9' | '9:16';

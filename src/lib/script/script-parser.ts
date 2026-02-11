@@ -179,9 +179,9 @@ const SHOT_GENERATION_SYSTEM_PROMPT = `你是一个专业的分镜师/摄影指�
 
 interface ParseOptions {
   apiKey: string; // Supports comma-separated multiple keys
-  provider: 'zhipu' | 'openai';
+  provider: string;
   baseUrl: string;
-  model: string; // 自定义模型名称（如 deepseek-v3）
+  model: string;
   language?: string;
   sceneCount?: number; // 限制场景数量（用于预告片等）
   shotCount?: number; // 每场景分镜数提示（传递给后续 shot generation）
@@ -831,7 +831,7 @@ const STORYBOARD_STRUCTURE_PROMPT = `
 
 export interface ScriptGenerationOptions {
   apiKey: string;
-  provider: 'zhipu' | 'openai';
+  provider: string;
   baseUrl: string;
   model: string;
   language?: string;

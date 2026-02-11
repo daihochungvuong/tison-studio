@@ -91,15 +91,28 @@ export async function convertToHttpUrl(rawUrl: unknown): Promise<string> {
     return url;
   }
   
-  // For base64 or local data URLs, we need to upload to get HTTP URL
-  // Note: Upload not configured - user must use HTTP URLs directly
-  if (url.startsWith('data:image/') || url.startsWith('data:video/') || url.startsWith('data:audio/') || url.startsWith('local-image://')) {
-    console.warn('[VideoGen] Media upload not configured for data URL. Please configure image host or use HTTP URLs directly. Type:', url.substring(0, 30));
-    return '';
+  // For base64/local data URLs, upload to image host
+  const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
+  if (!isImageHostConfigured()) {
+    throw new Error('图床未配置，请在设置中配置图床 API Key');
   }
-  
-  console.warn('[VideoGen] Unknown URL format:', url.substring(0, 30));
-  return '';
+
+  let imageData = url;
+  if (url.startsWith('local-image://')) {
+    const { readImageAsBase64 } = await import('@/lib/image-storage');
+    const base64 = await readImageAsBase64(url);
+    if (!base64) throw new Error(`无法读取本地文件: ${url.substring(0, 40)}`);
+    imageData = base64;
+  }
+
+  const result = await uploadToImageHost(imageData, {
+    name: `media_ref_${Date.now()}`,
+    expiration: 15552000,
+  });
+  if (!result.success || !result.url) {
+    throw new Error(result.error || '图床上传失败');
+  }
+  return result.url;
 }
 
 // Build image_with_roles array for video generation
@@ -245,7 +258,7 @@ export async function callVideoGenerationApi(
 
   switch (format) {
     case 'volc':
-      return callVolcVideoApi(apiKey, prompt, videoBaseUrl, model, aspectRatio, imageWithRoles, videoResolution, duration, cameraFixed, onProgress, keyManager);
+      return callVolcVideoApi(apiKey, prompt, videoBaseUrl, model, aspectRatio, imageWithRoles, videoResolution, duration, cameraFixed, onProgress, keyManager, videoRefs, audioRefs);
     case 'wan':
       return callWanVideoApi(apiKey, prompt, videoBaseUrl, model, imageWithRoles, videoResolution, duration, enableAudio, onProgress, keyManager);
     case 'kling':
@@ -372,6 +385,10 @@ async function callVolcVideoApi(
   cameraFixed?: boolean,
   onProgress?: (progress: number) => void,
   keyManager?: { handleError: (status: number) => boolean },
+  /** Seedance 2.0: 视频引用 URL 列表 */
+  videoRefs?: string[],
+  /** Seedance 2.0: 音频引用 URL 列表 */
+  audioRefs?: string[],
 ): Promise<string> {
   // 构建 content 数组（Volcengine 格式: text + image_url）
   const content: Array<Record<string, unknown>> = [];
@@ -394,6 +411,30 @@ async function callVolcVideoApi(
         image_url: { url: img.url },
         role: img.role,
       });
+    }
+  }
+
+  // Seedance 2.0 多模态：视频引用（延长/编辑/运镜复刻等）
+  if (videoRefs && videoRefs.length > 0) {
+    for (const vUrl of videoRefs) {
+      if (vUrl) {
+        content.push({
+          type: 'video_url',
+          video_url: { url: vUrl },
+        });
+      }
+    }
+  }
+
+  // Seedance 2.0 多模态：音频引用（BGM/卡点等）
+  if (audioRefs && audioRefs.length > 0) {
+    for (const aUrl of audioRefs) {
+      if (aUrl) {
+        content.push({
+          type: 'audio_url',
+          audio_url: { url: aUrl },
+        });
+      }
     }
   }
 
