@@ -293,6 +293,8 @@ export interface DirectorProjectData {
     videoResolution: '480p' | '720p' | '1080p';
     sceneCount: number;
     storyPrompt: string;
+    /** 直接存储的视觉风格预设 ID（如 '2d_ghibli'），用于精确反查 */
+    visualStyleId?: string;
     styleTokens?: string[];
     characterReferenceImages?: string[];
     characterDescriptions?: string[];

@@ -92,6 +92,7 @@ import {
   VISUAL_STYLE_PRESETS, 
   STYLE_CATEGORIES,
   getStyleById, 
+  getStylePrompt,
   getMediaType,
   DEFAULT_STYLE_ID 
 } from "@/lib/constants/visual-styles";
@@ -300,18 +301,19 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   const sceneMap = useMemo(() => new Map(splitScenes.map(s => [s.id, s])), [splitScenes]);
 
   // Get current style from config
-  // 使用第一个 token（最具特征性）来精确匹配，避免通用 token 导致的误匹配
+  // 优先使用直接存储的 visualStyleId，回退到 styleTokens 反推（兼容旧项目）
   const currentStyleId = useMemo(() => {
+    if (storyboardConfig.visualStyleId) {
+      return storyboardConfig.visualStyleId;
+    }
+    // 向后兼容：将 styleTokens 合并后匹配 prompt 前缀
     if (storyboardConfig.styleTokens && storyboardConfig.styleTokens.length > 0) {
-      const firstToken = storyboardConfig.styleTokens[0];
-      // 匹配 prompt 开头部分或完全匹配
-      const found = VISUAL_STYLE_PRESETS.find(s => 
-        s.prompt.startsWith(firstToken) || s.prompt.includes(firstToken)
-      );
+      const joinedTokens = storyboardConfig.styleTokens.join(', ');
+      const found = VISUAL_STYLE_PRESETS.find(s => s.prompt.startsWith(joinedTokens));
       return found?.id || DEFAULT_STYLE_ID;
     }
     return DEFAULT_STYLE_ID;
-  }, [storyboardConfig.styleTokens]);
+  }, [storyboardConfig.visualStyleId, storyboardConfig.styleTokens]);
 
   // 读取当前摄影风格档案（未设置时使用默认经典电影摄影风格）
   const currentCinProfileId = projectData?.cinematographyProfileId || DEFAULT_CINEMATOGRAPHY_PROFILE_ID;
@@ -326,8 +328,8 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   const handleStyleChange = useCallback((styleId: string) => {
     const style = getStyleById(styleId);
     if (style) {
-      // 将 prompt 拆分为 tokens 数组以保持兼容性
-      setStoryboardConfig({ styleTokens: style.prompt.split(', ').slice(0, 5) });
+      // 直接存储风格 ID，同时保留 styleTokens（完整 prompt）兼容旧逻辑
+      setStoryboardConfig({ visualStyleId: styleId, styleTokens: [style.prompt] });
       toast.success(`已切换为 ${style.name} 风格`);
     }
   }, [setStoryboardConfig]);
@@ -1237,7 +1239,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
             ? getCinematographyProfile(projectData.cinematographyProfileId)
             : undefined;
           const fullPrompt = buildVideoPrompt(scene, cinProfile, {
-            styleTokens: storyboardConfig.styleTokens,
+            styleTokens: [getStylePrompt(currentStyleId)],
             aspectRatio: storyboardConfig.aspectRatio,
             mediaType: getMediaType(currentStyleId),
           });
@@ -1471,7 +1473,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         : undefined;
       
       const fullPrompt = buildVideoPrompt(scene, cinProfile, {
-        styleTokens: storyboardConfig.styleTokens,
+        styleTokens: [getStylePrompt(currentStyleId)],
         aspectRatio: storyboardConfig.aspectRatio,
         mediaType: getMediaType(currentStyleId),
       });
@@ -1699,11 +1701,11 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         imageError: null,
       });
 
-      // Build enhanced prompt with style tokens for consistency
+      // Build enhanced prompt with full style prompt for consistency
       let enhancedPrompt = promptToUse;
-      if (storyboardConfig.styleTokens && storyboardConfig.styleTokens.length > 0) {
-        const styleStr = storyboardConfig.styleTokens.join(', ');
-        enhancedPrompt = `${promptToUse}. Style: ${styleStr}`;
+      const fullStylePrompt = getStylePrompt(currentStyleId);
+      if (fullStylePrompt) {
+        enhancedPrompt = `${promptToUse}. Style: ${fullStylePrompt}`;
       }
 
       // Collect reference images: scene background > characters > storyboard style
@@ -2628,11 +2630,11 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         endFrameError: null,
       });
 
-      // Build enhanced prompt with style tokens
+      // Build enhanced prompt with full style prompt
       let enhancedPrompt = promptToUse;
-      if (storyboardConfig.styleTokens && storyboardConfig.styleTokens.length > 0) {
-        const styleStr = storyboardConfig.styleTokens.join(', ');
-        enhancedPrompt = `${promptToUse}. Style: ${styleStr}`;
+      const endFrameStylePrompt = getStylePrompt(currentStyleId);
+      if (endFrameStylePrompt) {
+        enhancedPrompt = `${promptToUse}. Style: ${endFrameStylePrompt}`;
       }
 
       // Collect reference images - include scene background and first frame for consistency
