@@ -3,7 +3,7 @@
 // Commercial licensing available. See COMMERCIAL_LICENSE.md.
 import { useCharacterLibraryStore } from "@/stores/character-library-store";
 import { getFeatureConfig } from "@/lib/ai/feature-router";
-import { imageUrlToBase64 } from "@/lib/ai/image-generator";
+import { imageUrlToBase64, submitGridImageRequest } from "@/lib/ai/image-generator";
 import { readImageAsBase64 } from "@/lib/image-storage";
 import type { SplitScene, ShotSizeType } from "@/stores/director-store";
 
@@ -94,62 +94,29 @@ export async function callImageGenerationApi(
   if (!imageBaseUrl) {
     throw new Error('请先在设置中配置图片生成服务映射');
   }
-  const requestBody: Record<string, unknown> = {
-    model: model,
+  // Call image generation API with smart routing (auto-selects chat/completions or images/generations)
+  const apiResult = await submitGridImageRequest({
+    model,
     prompt,
-    n: 1,
-    aspect_ratio: aspectRatio,
-  };
-
-  if (referenceImages.length > 0) {
-    // APIMart API expects array of strings: ["url1", "data:image/...;base64,..."]
-    requestBody.image_urls = referenceImages;
-  }
-
-  const submitResponse = await fetch(`${imageBaseUrl}/v1/images/generations`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKeyToUse}`,
-    },
-    body: JSON.stringify(requestBody),
+    apiKey: apiKeyToUse,
+    baseUrl: imageBaseUrl,
+    aspectRatio,
+    referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
   });
 
-  if (!submitResponse.ok) {
-    const errorText = await submitResponse.text();
-    console.error('[ImageGen] APIMart error:', submitResponse.status, errorText);
-    let errorMessage = `Image API failed: ${submitResponse.status}`;
+  // Direct URL result
+  if (apiResult.imageUrl) {
+    let finalImageUrl = apiResult.imageUrl;
     try {
-      const errorJson = JSON.parse(errorText);
-      errorMessage = errorJson.error?.message || errorJson.message || errorMessage;
-    } catch {
-      // Ignore JSON parse errors
-    }
-    throw new Error(errorMessage);
-  }
-
-  const submitData = await submitResponse.json();
-  console.log('[ImageGen] API response:', JSON.stringify(submitData, null, 2));
-
-  const dataField = submitData.data;
-  const firstItem = Array.isArray(dataField) ? dataField[0] : dataField;
-  
-  // Check for direct image URL
-  const directUrl = normalizeUrl(firstItem?.url) || normalizeUrl(firstItem?.image_url) || normalizeUrl(firstItem?.output_url);
-  if (directUrl) {
-    let finalImageUrl = directUrl;
-    try {
-      finalImageUrl = await imageUrlToBase64(directUrl);
+      finalImageUrl = await imageUrlToBase64(apiResult.imageUrl);
     } catch (e) {
       console.warn('[ImageGen] Failed to convert to base64:', e);
     }
-    return { imageUrl: finalImageUrl, httpUrl: directUrl };
+    return { imageUrl: finalImageUrl, httpUrl: apiResult.imageUrl };
   }
 
   // Poll for completion if async
-  const taskId = firstItem?.task_id?.toString() || firstItem?.id?.toString() 
-    || submitData.task_id?.toString() || submitData.id?.toString();
-  
+  const taskId = apiResult.taskId;
   if (taskId) {
     const pollInterval = 2000;
     const maxAttempts = 60;

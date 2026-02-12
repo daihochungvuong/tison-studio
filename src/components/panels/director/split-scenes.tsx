@@ -1416,7 +1416,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       };
 
       // Convert local/base64 image to HTTP URL for API
-      // APIMart video API requires HTTP URLs, not base64
+      // Video API requires HTTP URLs, not base64
       const convertToHttpUrl = async (rawUrl: any): Promise<string> => {
         const url = normalizeUrl(rawUrl);
         if (!url) {
@@ -1702,31 +1702,16 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         imageBaseUrl,
       });
 
-      // 使用服务映射配置的模型和端点
-      const requestBody: any = {
-        model: model, // 使用服务映射选择的模型
-        prompt: enhancedPrompt,
-        n: 1,
-        aspect_ratio: storyboardConfig.aspectRatio || '9:16',
-        resolution: storyboardConfig.resolution || '2K',
-      };
-
-      // Add reference images if any
-      // API supports: HTTP URLs or base64 Data URI format (data:image/jpeg;base64,...)
-      // For local-image:// paths, convert to base64 first
+      // Collect reference images for API
+      // Supports: HTTP URLs, base64 Data URI, local-image:// (converted to base64)
       const processedRefs: string[] = [];
       for (const url of referenceImages.slice(0, 4)) {
         if (!url) continue;
-        // HTTP/HTTPS URLs - use directly
         if (url.startsWith('http://') || url.startsWith('https://')) {
           processedRefs.push(url);
-        }
-        // Base64 Data URI - use directly
-        else if (url.startsWith('data:image/') && url.includes(';base64,')) {
+        } else if (url.startsWith('data:image/') && url.includes(';base64,')) {
           processedRefs.push(url);
-        }
-        // Local image path - convert to base64
-        else if (url.startsWith('local-image://')) {
+        } else if (url.startsWith('local-image://')) {
           try {
             const base64 = await readImageAsBase64(url);
             if (base64) processedRefs.push(base64);
@@ -1735,38 +1720,19 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
           }
         }
       }
-      
-      if (processedRefs.length > 0) {
-        // APIMart API expects array of strings: ["url1", "url2"] or ["data:image/...;base64,..."]
-        requestBody.image_urls = processedRefs;
-        console.log('[SplitScenes] Using reference images:', processedRefs.length, 
-          processedRefs.map(u => u.startsWith('data:') ? 'base64' : 'url'));
-      }
 
-      const submitResponse = await fetch(`${imageBaseUrl}/v1/images/generations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
+      // Call image generation API with smart routing (auto-selects chat/completions or images/generations)
+      const apiResult = await submitGridImageRequest({
+        model,
+        prompt: enhancedPrompt,
+        apiKey,
+        baseUrl: imageBaseUrl,
+        aspectRatio: storyboardConfig.aspectRatio || '9:16',
+        resolution: storyboardConfig.resolution || '2K',
+        referenceImages: processedRefs.length > 0 ? processedRefs : undefined,
       });
 
-      if (!submitResponse.ok) {
-        const errorText = await submitResponse.text();
-        console.error('[SplitScenes] APIMart image error:', submitResponse.status, errorText);
-        let errorMessage = `Image API failed: ${submitResponse.status}`;
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.error?.message || errorJson.message || errorMessage;
-        } catch {}
-        throw new Error(errorMessage);
-      }
-
-      const submitData = await submitResponse.json();
-      console.log('[SplitScenes] APIMart image response:', JSON.stringify(submitData, null, 2));
-
-      // Helper to normalize URL (handle array format)
+      // Helper to normalize URL (handle array format) - used in poll responses
       const normalizeUrlValue = (url: any): string | undefined => {
         if (!url) return undefined;
         if (Array.isArray(url)) return url[0] || undefined;
@@ -1774,30 +1740,19 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         return undefined;
       };
 
-      // APIMart response formats:
-      // 1. Direct result: { data: [{ url: "..." }] } or { code: 200, data: [{ url: "..." }] }
-      // 2. Async task: { data: [{ task_id: "..." }] } or { code: 200, data: [{ task_id: "..." }] }
-      const dataField = submitData.data;
-      const firstItem = Array.isArray(dataField) ? dataField[0] : dataField;
-      
-      // Check for direct image URL in response (normalize in case it's array)
-      const directUrl = normalizeUrlValue(firstItem?.url) || normalizeUrlValue(firstItem?.image_url) || normalizeUrlValue(firstItem?.output_url);
-      if (directUrl) {
-        console.log('[SplitScenes] Got direct image URL:', directUrl);
-        // 持久化到本地 + 图床
-        const persistResult = await persistSceneImage(directUrl, sceneId, 'first');
-        updateSplitSceneImage(sceneId, persistResult.localPath, scene.width, scene.height, persistResult.httpUrl || directUrl);
+      // Direct URL result
+      if (apiResult.imageUrl) {
+        const persistResult = await persistSceneImage(apiResult.imageUrl, sceneId, 'first');
+        updateSplitSceneImage(sceneId, persistResult.localPath, scene.width, scene.height, persistResult.httpUrl || apiResult.imageUrl);
         autoSaveImageToLibrary(sceneId, persistResult.localPath);
         toast.success(`分镜 ${sceneId + 1} 图片生成完成，已保存到素材库`);
         setIsGenerating(false);
         return;
       }
 
-      // Parse task ID if async
-      let taskId: string | undefined = firstItem?.task_id?.toString() || firstItem?.id?.toString() 
-        || submitData.task_id?.toString() || submitData.id?.toString();
-      
-      console.log('[SplitScenes] Parsed task ID:', taskId, 'from firstItem:', firstItem);
+      // Async task - poll for completion
+      let taskId: string | undefined = apiResult.taskId;
+      console.log('[SplitScenes] Async task:', taskId);
 
       // Poll for completion if we have a task ID
       if (taskId) {
@@ -2514,47 +2469,33 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       throw new Error('请先在设置中配置图片生成服务映射');
     }
 
-    const requestBody: any = {
-      model: model,
+    // Call image generation API with smart routing
+    const apiResult = await submitGridImageRequest({
+      model,
       prompt,
-      n: 1,
-      aspect_ratio: aspect,
+      apiKey: apiKeyToUse,
+      baseUrl: imageBaseUrl,
+      aspectRatio: aspect,
       resolution: storyboardConfig.resolution || '2K',
-    };
-    if (refUrls && refUrls.length > 0) {
-      // APIMart API expects array of strings
-      requestBody.image_urls = refUrls.slice(0, 14);
-    }
-
-    const submitResponse = await fetch(`${imageBaseUrl}/v1/images/generations`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKeyToUse}` }, body: JSON.stringify(requestBody)
+      referenceImages: refUrls && refUrls.length > 0 ? refUrls.slice(0, 14) : undefined,
     });
-    if (!submitResponse.ok) {
-      const errorText = await submitResponse.text();
-      throw new Error(`Image API failed: ${submitResponse.status} ${errorText}`);
-    }
-    const submitData = await submitResponse.json();
 
     const normalizeUrlValue = (url: any): string | undefined => Array.isArray(url) ? (url[0] || undefined) : (typeof url === 'string' ? url : undefined);
-    const dataField = submitData.data;
-    const firstItem = Array.isArray(dataField) ? dataField[0] : dataField;
-    let directUrl = normalizeUrlValue(firstItem?.url) || normalizeUrlValue(firstItem?.image_url) || normalizeUrlValue(firstItem?.output_url);
-
-    let taskId: string | undefined = firstItem?.task_id?.toString() || firstItem?.id?.toString() || submitData.task_id?.toString() || submitData.id?.toString();
+    let directUrl = apiResult.imageUrl;
+    let taskId: string | undefined = apiResult.taskId;
 
     if (!taskId && !directUrl) {
-      // 对非常规响应：尝试一次“无参考”重试（保持合并模式，不降级到单图通道）
+      // 对非常规响应：尝试一次"无参考"重试（保持合并模式，不降级到单图通道）
       if (refUrls.length > 0 && strategy !== 'none') {
-        const retryBody: any = { model: model, prompt, n: 1, aspect_ratio: aspect };
-        const retryResp = await fetch(`${imageBaseUrl}/v1/images/generations`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKeyToUse}` }, body: JSON.stringify(retryBody)
+        const retryResult = await submitGridImageRequest({
+          model,
+          prompt,
+          apiKey: apiKeyToUse,
+          baseUrl: imageBaseUrl,
+          aspectRatio: aspect,
         });
-        if (retryResp.ok) {
-          const retryData = await retryResp.json();
-          const rFirst = Array.isArray(retryData.data) ? retryData.data[0] : retryData.data;
-          directUrl = normalizeUrlValue(rFirst?.url) || normalizeUrlValue(rFirst?.image_url) || normalizeUrlValue(rFirst?.output_url);
-          taskId = rFirst?.task_id?.toString() || rFirst?.id?.toString() || retryData.task_id?.toString() || retryData.id?.toString();
-        }
+        directUrl = retryResult.imageUrl;
+        taskId = retryResult.taskId;
       }
       if (!taskId && !directUrl) throw new Error('Invalid image task response');
     }
@@ -2681,16 +2622,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         referenceCount: referenceImages.length,
       });
 
-      // Call image generation API
-      const requestBody: any = {
-        model: model,
-        prompt: enhancedPrompt,
-        n: 1,
-        aspect_ratio: storyboardConfig.aspectRatio || '9:16',
-        resolution: storyboardConfig.resolution || '2K',
-      };
-
-      // Process reference images
+      // Process reference images for API
       const processedRefs: string[] = [];
       for (const url of referenceImages.slice(0, 4)) {
         if (!url) continue;
@@ -2707,34 +2639,19 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
           }
         }
       }
-      
-      if (processedRefs.length > 0) {
-        // APIMart API expects array of strings: ["url1", "data:image/...;base64,..."]
-        requestBody.image_urls = processedRefs;
-      }
 
-      const submitResponse = await fetch(`${imageBaseUrl}/v1/images/generations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
+      // Call image generation API with smart routing
+      const apiResult = await submitGridImageRequest({
+        model,
+        prompt: enhancedPrompt,
+        apiKey,
+        baseUrl: imageBaseUrl,
+        aspectRatio: storyboardConfig.aspectRatio || '9:16',
+        resolution: storyboardConfig.resolution || '2K',
+        referenceImages: processedRefs.length > 0 ? processedRefs : undefined,
       });
 
-      if (!submitResponse.ok) {
-        const errorText = await submitResponse.text();
-        let errorMessage = `Image API failed: ${submitResponse.status}`;
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.error?.message || errorJson.message || errorMessage;
-        } catch {}
-        throw new Error(errorMessage);
-      }
-
-      const submitData = await submitResponse.json();
-
-      // Helper to normalize URL
+      // Helper to normalize URL (handle array format) - used in poll responses
       const normalizeUrlValue = (url: any): string | undefined => {
         if (!url) return undefined;
         if (Array.isArray(url)) return url[0] || undefined;
@@ -2742,15 +2659,10 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         return undefined;
       };
 
-      const dataField = submitData.data;
-      const firstItem = Array.isArray(dataField) ? dataField[0] : dataField;
-      
-      // Check for direct image URL
-      const directUrl = normalizeUrlValue(firstItem?.url) || normalizeUrlValue(firstItem?.image_url);
-      if (directUrl) {
-        // 持久化到本地 + 图床
-        const persistResult = await persistSceneImage(directUrl, sceneId, 'end');
-        updateSplitSceneEndFrame(sceneId, persistResult.localPath, 'ai-generated', persistResult.httpUrl || directUrl);
+      // Direct URL result
+      if (apiResult.imageUrl) {
+        const persistResult = await persistSceneImage(apiResult.imageUrl, sceneId, 'end');
+        updateSplitSceneEndFrame(sceneId, persistResult.localPath, 'ai-generated', persistResult.httpUrl || apiResult.imageUrl);
         // 自动保存尾帧到素材库
         const folderId = getImageFolderId();
         addMediaFromUrl({
@@ -2766,8 +2678,8 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         return;
       }
 
-      // Poll for completion if async
-      let taskId: string | undefined = firstItem?.task_id?.toString() || firstItem?.id?.toString();
+      // Async task - poll for completion
+      let taskId: string | undefined = apiResult.taskId;
       
       if (taskId) {
         const pollInterval = 2000;

@@ -12,6 +12,7 @@ import { buildStoryboardPrompt, getDefaultNegativePrompt, type StoryboardPromptC
 import { calculateGrid, type AspectRatio, type Resolution, RESOLUTION_PRESETS } from './grid-calculator';
 import { retryOperation } from "@/lib/utils/retry";
 import { delay, RATE_LIMITS } from "@/lib/utils/rate-limiter";
+import { submitGridImageRequest } from '@/lib/ai/image-generator';
 
 export interface StoryboardGenerationConfig {
   storyPrompt: string;
@@ -45,9 +46,9 @@ const buildEndpoint = (baseUrl: string, path: string) => {
 };
 
 /**
- * Submit image generation task to APIMart API
+ * Submit image generation task (legacy - kept for reference)
  */
-async function submitApimartImageTask(
+async function submitImageGenTask(
   prompt: string,
   aspectRatio: string,
   resolution: string,
@@ -234,11 +235,11 @@ async function submitZhipuImageTask(
 }
 
 /**
- * Poll APIMart task status until completion
- * API: GET /v1/tasks/{task_id} (matching director_ai)
+ * Poll task status until completion
+ * API: GET /v1/tasks/{task_id}
  * Response: data.result.images[0].url[0] for images
  */
-async function pollApimartTaskStatus(
+async function pollTaskCompletion(
   taskId: string,
   apiKey: string,
   onProgress?: (progress: number) => void,
@@ -430,25 +431,35 @@ export async function generateStoryboardImage(
 
   onProgress?.(10);
 
-  // Submit image generation task directly to external API
+  // Submit image generation task with smart API format routing
   let result: { taskId?: string; imageUrl?: string; estimatedTime?: number };
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, '');
   if (!baseUrl) {
     throw new Error('请先在设置中配置图片生成服务映射');
   }
-  if (provider === 'zhipu') {
-    result = await submitZhipuImageTask(prompt, outputSize, apiKey, config.model, baseUrl);
+  const model = config.model;
+  if (!model) {
+    throw new Error('请先在设置中配置图片生成模型');
+  }
+
+  // Use submitGridImageRequest for smart routing (auto-detects chat/completions vs images/generations)
+  const apiResult = await submitGridImageRequest({
+    model,
+    prompt,
+    apiKey,
+    baseUrl,
+    aspectRatio,
+    resolution,
+    referenceImages: config.characterReferenceImages,
+  });
+
+  if (apiResult.imageUrl) {
+    result = { imageUrl: apiResult.imageUrl, estimatedTime: 0 };
+  } else if (apiResult.taskId) {
+    result = { taskId: apiResult.taskId, estimatedTime: 30 };
   } else {
-    result = await submitApimartImageTask(
-      prompt,
-      aspectRatio,
-      resolution,
-      apiKey,
-      config.characterReferenceImages,
-      config.model,
-      baseUrl
-    );
+    throw new Error('Invalid API response: no image URL or task ID');
   }
 
   onProgress?.(30);
@@ -470,7 +481,7 @@ export async function generateStoryboardImage(
   // If taskId is returned, poll for completion
   if (result.taskId) {
     // 使用与提交任务相同的 baseUrl 进行轮询
-    const imageUrl = await pollApimartTaskStatus(
+    const imageUrl = await pollTaskCompletion(
       result.taskId,
       apiKey,
       (progress) => {
@@ -495,9 +506,9 @@ export async function generateStoryboardImage(
 }
 
 /**
- * Submit video generation task to APIMart API
+ * Submit video generation task
  */
-async function submitApimartVideoTask(
+async function submitVideoGenTask(
   imageInput: string,
   prompt: string,
   aspectRatio: string,
@@ -566,9 +577,9 @@ async function submitApimartVideoTask(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[StoryboardService] APIMart video error:', response.status, errorText);
+        console.error('[StoryboardService] Video API error:', response.status, errorText);
 
-      let errorMessage = `APIMart API error: ${response.status}`;
+        let errorMessage = `Video API error: ${response.status}`;
       try {
         const errorJson = JSON.parse(errorText);
         errorMessage = errorJson.error?.message || errorJson.message || errorJson.msg || errorMessage;
@@ -594,7 +605,7 @@ async function submitApimartVideoTask(
     retryOn429: true,
   });
 
-  console.log('[StoryboardService] APIMart video response:', data);
+  console.log('[StoryboardService] Video API response:', data);
 
   // Parse response
   let taskId: string | undefined;
@@ -608,7 +619,7 @@ async function submitApimartVideoTask(
   }
 
   if (!taskId) {
-    throw new Error('APIMart returned empty task ID');
+    throw new Error('API returned empty task ID');
   }
 
   return {
@@ -618,17 +629,17 @@ async function submitApimartVideoTask(
 }
 
 /**
- * Poll APIMart video task status until completion
+ * Poll video task status until completion
  * Uses the same unified /v1/tasks/ endpoint
  */
-async function pollApimartVideoTaskStatus(
+async function pollVideoTaskCompletion(
   taskId: string,
   apiKey: string,
   onProgress?: (progress: number) => void,
   baseUrl: string
 ): Promise<string> {
   // Use the unified polling function with video type and dynamic baseUrl
-  return pollApimartTaskStatus(taskId, apiKey, onProgress, 'video', baseUrl);
+  return pollTaskCompletion(taskId, apiKey, onProgress, 'video', baseUrl);
 }
 
 /**
@@ -697,13 +708,13 @@ export async function generateSceneVideos(
       onSceneProgress?.(scene.id, 10);
 
       // Submit video generation task directly to external API
-      // APIMart supports base64 data URLs directly
+      // API supports base64 data URLs directly
       if (provider !== 'zhipu') {
         const resolvedBaseUrl = baseUrl?.replace(/\/+$/, '');
         if (!resolvedBaseUrl) {
           throw new Error('请先在设置中配置视频生成服务映射');
         }
-        const result = await submitApimartVideoTask(
+        const result = await submitVideoGenTask(
           scene.imageDataUrl,
           scene.videoPrompt,
           aspectRatio,
@@ -726,7 +737,7 @@ export async function generateSceneVideos(
 
         // Poll for completion
         if (result.taskId) {
-          const videoUrl = await pollApimartVideoTaskStatus(
+          const videoUrl = await pollVideoTaskCompletion(
             result.taskId,
             apiKey,
             (progress) => {
