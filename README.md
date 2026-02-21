@@ -34,7 +34,8 @@
   <img src="docs/images/screenshot.png" width="800" alt="Screenshot" />
 </p>
 -->
-![Uploading 1771428968476_3nkjdd.png…]()
+
+![1771428968476_3nkjdd](https://github.com/user-attachments/assets/582ee70f-f0dc-433b-9d5c-2ddb8f463450)
 
 ## 简介
 
@@ -194,5 +195,6 @@ moyin-creator/
 ---
 
 <p align="center">Made with ❤️ by <a href="https://github.com/MemeCalculate">MemeCalculate</a></p>
+
 
 
