@@ -186,19 +186,16 @@ moyin-creator/
 - 📧 Email: [memecalculate@gmail.com](mailto:memecalculate@gmail.com)
 - 🐙 GitHub: [https://github.com/MemeCalculate/moyin-creator](https://github.com/MemeCalculate/moyin-creator)
 
-### 联系作者
+### 交流群
+<img width="1200" height="1782" alt="888" src="https://github.com/user-attachments/assets/625d32ab-5426-49f0-a478-f6be62ba0dd2" />
 
 <img src="docs/images/wechat-contact.png" width="200" alt="微信联系" />
 
-### 打赏支持
-
-如果本项目对你有帮助，欢迎打赏支持：
-
-<img src="docs/images/donate-wechat.png" width="200" alt="微信打赏" />
 
 ---
 
 <p align="center">Made with ❤️ by <a href="https://github.com/MemeCalculate">MemeCalculate</a></p>
+
 
 
 
