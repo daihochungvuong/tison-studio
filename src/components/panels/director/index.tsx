@@ -570,7 +570,7 @@ export function DirectorView() {
         );
 
       default:
-        return <ScreenplayInput />;
+        return <ScreenplayInput onGenerateStoryboard={handleGenerateStoryboard} />;
     }
   };
 

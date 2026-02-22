@@ -19,6 +19,7 @@ import {
   updateProviderKeys,
   classifyModelByName,
 } from '@/lib/api-key-manager';
+import { injectDiscoveryCache, type DiscoveredModelLimits } from '@/lib/ai/model-registry';
 
 // Re-export IProvider for convenience
 export type { IProvider } from '@/lib/api-key-manager';
@@ -35,7 +36,9 @@ export type AIFeature =
   | 'scene_generation'      // 场景图片生成
   | 'video_generation'      // 视频生成
   | 'image_understanding'   // 图片理解/分析
-  | 'chat';                 // 通用对话
+  | 'chat'                  // 通用对话
+  | 'freedom_image'         // 自由板块-图片生成
+  | 'freedom_video';        // 自由板块-视频生成
 
 /**
  * 功能绑定配置
@@ -58,6 +61,8 @@ export const AI_FEATURES: Array<{
   { key: 'video_generation', name: '视频生成', description: '将图片转换为视频' },
   { key: 'image_understanding', name: '图片理解', description: '分析图片内容' },
   { key: 'chat', name: '通用对话', description: 'AI 对话和文本生成' },
+  { key: 'freedom_image', name: '自由板块-图片', description: '自由板块独立的图片生成配置' },
+  { key: 'freedom_video', name: '自由板块-视频', description: '自由板块独立的视频生成配置' },
 ];
 
 // ==================== Types ====================
@@ -176,6 +181,10 @@ interface APIConfigState {
   modelTypes: Record<string, string>;
   // model_name -> tags: ["对话","识图","工具"] etc.
   modelTags: Record<string, string[]>;
+  
+  // Discovered model limits (Error-driven Discovery)
+  // model_name -> { maxOutput?, contextWindow?, discoveredAt }
+  discoveredModelLimits: Record<string, DiscoveredModelLimits>;
 }
 
 interface APIConfigActions {
@@ -233,6 +242,10 @@ interface APIConfigActions {
   // Display helpers
   maskApiKey: (key: string) => string;
   getAllConfigs: () => { provider: ProviderId; configured: boolean; masked: string }[];
+  
+  // Model limits discovery
+  getDiscoveredModelLimits: (model: string) => DiscoveredModelLimits | undefined;
+  setDiscoveredModelLimits: (model: string, limits: Partial<DiscoveredModelLimits>) => void;
 }
 
 type APIConfigStore = APIConfigState & APIConfigActions;
@@ -269,6 +282,8 @@ const defaultFeatureBindings: FeatureBindings = {
   video_generation: null,
   image_understanding: null,
   chat: null,
+  freedom_image: null,
+  freedom_video: null,
 };
 const defaultImageHostProviders: ImageHostProvider[] = DEFAULT_IMAGE_HOST_PROVIDERS.map((p) => ({
   ...p,
@@ -293,6 +308,7 @@ const initialState: APIConfigState = {
   modelEndpointTypes: {},
   modelTypes: {},
   modelTags: {},
+  discoveredModelLimits: {},
 };
 
 // ==================== Store ====================
@@ -520,13 +536,38 @@ export const useAPIConfigStore = create<APIConfigStore>()(
       toggleFeatureBinding: (feature, binding) => {
         const current = get().featureBindings[feature] || [];
         const exists = current.includes(binding);
-        const newBindings = exists
-          ? current.filter(b => b !== binding)
-          : [...current, binding];
-        set((state) => ({
-          featureBindings: { ...state.featureBindings, [feature]: newBindings.length > 0 ? newBindings : null },
-        }));
-        console.log(`[APIConfig] Toggle ${feature}: ${binding} -> ${exists ? 'removed' : 'added'}`);
+        
+        // 同时检查 legacy 格式（platform:model）是否存在
+        // 例如 binding = "{id}:deepseek-v3" 但 current 里可能有 "memefast:deepseek-v3"
+        let legacyMatch: string | null = null;
+        const idx = binding.indexOf(':');
+        if (idx > 0) {
+          const providerId = binding.slice(0, idx);
+          const model = binding.slice(idx + 1);
+          const provider = get().providers.find(p => p.id === providerId);
+          if (provider) {
+            const legacyKey = `${provider.platform}:${model}`;
+            if (legacyKey !== binding && current.includes(legacyKey)) {
+              legacyMatch = legacyKey;
+            }
+          }
+        }
+        
+        if (exists || legacyMatch) {
+          // 删除：同时移除精确匹配和 legacy 格式
+          const newBindings = current.filter(b => b !== binding && b !== legacyMatch);
+          set((state) => ({
+            featureBindings: { ...state.featureBindings, [feature]: newBindings.length > 0 ? newBindings : null },
+          }));
+          console.log(`[APIConfig] Toggle ${feature}: ${binding} -> removed${legacyMatch ? ` (also removed legacy: ${legacyMatch})` : ''}`);
+        } else {
+          // 添加
+          const newBindings = [...current, binding];
+          set((state) => ({
+            featureBindings: { ...state.featureBindings, [feature]: newBindings.length > 0 ? newBindings : null },
+          }));
+          console.log(`[APIConfig] Toggle ${feature}: ${binding} -> added`);
+        }
       },
 
       // 获取功能的所有绑定
@@ -546,9 +587,20 @@ export const useAPIConfigStore = create<APIConfigStore>()(
         for (const binding of bindings) {
           const idx = binding.indexOf(':');
           if (idx <= 0) continue;
-          const platform = binding.slice(0, idx);
+          const platformOrId = binding.slice(0, idx);
           const model = binding.slice(idx + 1);
-          const provider = get().providers.find(p => p.platform === platform);
+          // 1. 优先按 provider.id 精确匹配（始终安全）
+          let provider = get().providers.find(p => p.id === platformOrId);
+          // 2. Fallback: 按 platform 匹配，但仅当该 platform 下只有一个供应商时
+          //    （防止多个 custom 供应商时误选第一个）
+          if (!provider) {
+            const platformMatches = get().providers.filter(p => p.platform === platformOrId);
+            if (platformMatches.length === 1) {
+              provider = platformMatches[0];
+            } else if (platformMatches.length > 1) {
+              console.warn(`[APIConfig] Ambiguous platform binding "${binding}" matches ${platformMatches.length} providers, skipping`);
+            }
+          }
           if (provider && parseApiKeys(provider.apiKey).length > 0) {
             results.push({ provider, model });
           }
@@ -785,10 +837,30 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           masked: maskApiKey(apiKeys[provider] || ''),
         }));
       },
+
+      // ==================== Model limits discovery ====================
+
+      getDiscoveredModelLimits: (model) => {
+        return get().discoveredModelLimits[model];
+      },
+
+      setDiscoveredModelLimits: (model, limits) => {
+        set((state) => ({
+          discoveredModelLimits: {
+            ...state.discoveredModelLimits,
+            [model]: {
+              ...state.discoveredModelLimits[model],
+              ...limits,
+              discoveredAt: Date.now(),
+            } as DiscoveredModelLimits,
+          },
+        }));
+        console.log(`[APIConfig] Discovered model limits for ${model}:`, limits);
+      },
     }),
     {
       name: 'opencut-api-config',  // localStorage key
-      version: 7,  // v7: remove deprecated providers
+      version: 9,  // v9: convert platform:model bindings to id:model (fix multi-custom-provider bug)
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Partial<APIConfigState> & { imageHostConfig?: LegacyImageHostConfig } | undefined;
         console.log(`[APIConfig] Migrating from version ${version}`);
@@ -801,6 +873,8 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           video_generation: null,
           image_understanding: null,
           chat: null,
+          freedom_image: null,
+          freedom_video: null,
         };
         const resolveImageHostProviders = (): ImageHostProvider[] => {
           const legacyConfig = state?.imageHostConfig;
@@ -923,6 +997,65 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           };
         }
         
+        // v8 -> v9: Convert platform:model bindings to id:model format
+        // Fixes bug where multiple custom providers all resolve to the first one
+        if (version === 8) {
+          const providers: IProvider[] = state?.providers || [];
+          const oldBindings = state?.featureBindings || {};
+          const newBindings: FeatureBindings = { ...defaultBindings };
+          let convertedCount = 0;
+          let removedCount = 0;
+          
+          for (const [key, value] of Object.entries(oldBindings)) {
+            const feature = key as AIFeature;
+            if (!Array.isArray(value)) {
+              newBindings[feature] = value ? [value as unknown as string] : null;
+              continue;
+            }
+            const converted: string[] = [];
+            for (const binding of value) {
+              const idx = binding.indexOf(':');
+              if (idx <= 0) { converted.push(binding); continue; }
+              const platformOrId = binding.slice(0, idx);
+              const model = binding.slice(idx + 1);
+              
+              // Already in id:model format?
+              if (providers.some(p => p.id === platformOrId)) {
+                converted.push(binding);
+                continue;
+              }
+              
+              // platform:model format — find matching provider(s)
+              const matches = providers.filter(p => p.platform === platformOrId);
+              if (matches.length === 1) {
+                // Unambiguous: convert to id:model
+                const newBinding = `${matches[0].id}:${model}`;
+                converted.push(newBinding);
+                convertedCount++;
+                console.log(`[APIConfig] v8->v9: Converted binding "${binding}" -> "${newBinding}"`);
+              } else if (matches.length > 1) {
+                // Ambiguous (e.g. "custom:deepseek-chat" with multiple custom providers)
+                // Remove — user must re-bind manually
+                removedCount++;
+                console.warn(`[APIConfig] v8->v9: Removed ambiguous binding "${binding}" (${matches.length} providers with platform "${platformOrId}")`);
+              } else {
+                // No matching provider — keep as-is (orphaned binding)
+                converted.push(binding);
+              }
+            }
+            newBindings[feature] = converted.length > 0 ? converted : null;
+          }
+          
+          if (convertedCount > 0 || removedCount > 0) {
+            console.log(`[APIConfig] v8->v9: Converted ${convertedCount} bindings, removed ${removedCount} ambiguous bindings`);
+          }
+          
+          return {
+            ...state,
+            featureBindings: newBindings,
+          };
+        }
+        
         // v6 -> v7: Remove deprecated providers (dik3, nanohajimi, apimart, zhipu)
         if (version === 6) {
           const DEPRECATED_PLATFORMS = ['dik3', 'nanohajimi', 'apimart', 'zhipu'];
@@ -1027,6 +1160,7 @@ export const useAPIConfigStore = create<APIConfigStore>()(
         modelEndpointTypes: state.modelEndpointTypes,
         modelTypes: state.modelTypes,
         modelTags: state.modelTags,
+        discoveredModelLimits: state.discoveredModelLimits,
       }),
     }
   )
@@ -1050,3 +1184,12 @@ export const useIsVideoGenerationReady = (): boolean => {
 export const useConcurrency = (): number => {
   return useAPIConfigStore((state) => state.concurrency);
 };
+
+// ==================== Model Registry Cache Injection ====================
+
+// Inject discovery cache into model-registry (avoids circular dependency)
+// This runs once when the module is loaded
+injectDiscoveryCache(
+  (model: string) => useAPIConfigStore.getState().getDiscoveredModelLimits(model),
+  (model: string, limits: Partial<DiscoveredModelLimits>) => useAPIConfigStore.getState().setDiscoveredModelLimits(model, limits),
+);

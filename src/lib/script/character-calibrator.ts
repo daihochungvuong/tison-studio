@@ -16,6 +16,8 @@
 
 import type { ScriptCharacter, ProjectBackground, EpisodeRawScript, CharacterIdentityAnchors, CharacterNegativePrompt } from '@/types/script';
 import { callFeatureAPI } from '@/lib/ai/feature-router';
+import { processBatched } from '@/lib/ai/batch-processor';
+import { estimateTokens, safeTruncate } from '@/lib/ai/model-registry';
 
 // ==================== 类型定义 ====================
 
@@ -315,21 +317,14 @@ export async function calibrateCharacters(
   const charsToProcess = charsWithStats.slice(0, maxCharsToSend);
   const skippedCount = charsWithStats.length - charsToProcess.length;
   
-  const characterListWithStats = charsToProcess.map((c, i) => {
-    if (c.sceneCount === 0 && c.dialogueCount === 0) {
-      return `${i + 1}. ${c.name} [未统计到出场]`;
-    }
-    return `${i + 1}. ${c.name} [出场${c.sceneCount}场, 对白${c.dialogueCount}条, 集数${c.episodeCount}]`;
-  }).join('\n');
-  
-  // 3. 收集对白样本作为上下文
-  const dialogueSamples: string[] = [];
-  for (const [name, s] of stats.entries()) {
-    if (s.dialogueSamples.length > 0) {
-      dialogueSamples.push(`【${name}】`);
-      dialogueSamples.push(...s.dialogueSamples);
-    }
-  }
+  // 3. 准备批处理 items（每个角色带上统计信息和对白样本）
+  const batchItems = charsToProcess.map(c => ({
+    name: c.name,
+    sceneCount: c.sceneCount,
+    dialogueCount: c.dialogueCount,
+    episodeCount: c.episodeCount,
+    dialogueSamples: stats.get(c.name)?.dialogueSamples || [],
+  }));
   
   // 计算总场次数用于判断核心主角的 10% 阈值
   let totalSceneCount = 0;
@@ -397,7 +392,44 @@ export async function calibrateCharacters(
 
 请以JSON格式返回分析结果。`;
 
-  const userPrompt = `【剧本信息】
+  // 共享的背景上下文（每批都带，用 safeTruncate 截断）
+  const outlineContext = safeTruncate(background.outline || '', 1500);
+  const biosContext = safeTruncate(background.characterBios || '', 1000);
+
+  // === 第一步：AI 角色分析（自动分批）===
+  let parsed: any;
+  try {
+    console.log('[CharacterCalibrator] 开始 AI 角色分析...');
+    
+    // 闭包收集跨批次的聚合字段
+    const allFilteredWords: string[] = [];
+    const allMergeRecords: MergeRecord[] = [];
+    const allAnalysisNotes: string[] = [];
+    
+    const { results: charResults, failedBatches } = await processBatched<
+      typeof batchItems[number],
+      any
+    >({
+      items: batchItems,
+      feature: 'script_analysis',
+      buildPrompts: (batch) => {
+        // 每批构建独立的角色列表和对白样本
+        const charList = batch.map((c, i) => {
+          if (c.sceneCount === 0 && c.dialogueCount === 0) {
+            return `${i + 1}. ${c.name} [未统计到出场]`;
+          }
+          return `${i + 1}. ${c.name} [出场${c.sceneCount}场, 对白${c.dialogueCount}条, 集数${c.episodeCount}]`;
+        }).join('\n');
+        
+        const batchDialogues: string[] = [];
+        for (const c of batch) {
+          if (c.dialogueSamples.length > 0) {
+            batchDialogues.push(`【${c.name}】`);
+            batchDialogues.push(...c.dialogueSamples);
+          }
+        }
+        
+        const user = `【剧本信息】
 剧名：《${background.title}》
 ${background.genre ? `类型：${background.genre}` : ''}
 ${background.era ? `时代背景：${background.era}` : ''}
@@ -407,132 +439,118 @@ ${background.timelineSetting ? `时间线：${background.timelineSetting}` : ''}
 核心主角阈值：出场 ≥ ${coreThreshold} 场
 
 【故事大纲】
-${background.outline?.slice(0, 1500) || '无'}
+${outlineContext || '无'}
 
 【人物小传】
-${background.characterBios?.slice(0, 1000) || '无'}
+${biosContext || '无'}
 
-【待校准的角色列表 + 出场统计】（共${rawCharacters.length}个原始提取）
-${characterListWithStats}
+【待校准的角色列表 + 出场统计】（共${batch.length}个）
+${charList}
 
 【角色对白样本】
-${dialogueSamples.slice(0, 100).join('\n')}
+${batchDialogues.slice(0, 100).join('\n')}
 
 请按照分级规则校准角色，返回JSON格式：
 {
   "characters": [
     {
-      "name": "张明",
-      "importance": "protagonist",
+      "name": "角色名",
+      "importance": "protagonist/supporting/minor/extra",
       "appearanceCount": 150,
       "dialogueCount": 200,
       "episodeSpan": [1, 60],
-      "role": "985毕业生，创业者，从底层奋斗成为物流巨头",
-      "age": "25-50岁",
-      "gender": "男",
-      "relationships": "老周(合伙人), 苏晴(妻子)"
-    },
-    {
-      "name": "刀疤哥",
-      "importance": "supporting",
-      "appearanceCount": 25,
-      "dialogueCount": 30,
-      "episodeSpan": [5, 40],
-      "role": "黑道人物，后成为张明的保镖",
-      "age": "35岁",
-      "gender": "男"
-    },
-    {
-      "name": "李老头",
-      "importance": "minor",
-      "appearanceCount": 2,
-      "dialogueCount": 5,
-      "episodeSpan": [12, 12],
-      "role": "关键线人，提供重要情报"
+      "role": "角色描述",
+      "age": "年龄",
+      "gender": "性别",
+      "relationships": "关系"
     }
   ],
-  "filteredWords": ["众人", "若干人", "保安", "警察", "护士", "保安1", "保安2"],
+  "filteredWords": ["被过滤的非角色词"],
   "mergeRecords": [
-    {
-      "finalName": "王总",
-      "variants": ["王总", "投资人王总"],
-      "reason": "同一人的不同称呼"
-    }
+    { "finalName": "最终名", "variants": ["变体1", "变体2"], "reason": "原因" }
   ],
-  "analysisNotes": "核心主角1个，重要配角8个，次要角艧12个，过滤群演7个"
+  "analysisNotes": "分析说明"
 }
 
 【极其重要！请特别注意】
-
-1. **宽松保留原则**：
-   - 有名字的全部保留！（即使只出场1次）
-   - 有称呼的全部保留！（如老X、小X、X哥、X总）
-   - 不确定的保留！（宁可多保留，不要遗漏）
-
-2. **严格过滤（只过滤这些）**：
-   - 纯职业词（无姓氏）：保安、警察、护士、员工
-   - 数字编号：保安1、警察2
-   - 群体词：众人、若干人、几名保安
-
-3. **不需要群体标签**：
-   - 不要生成【群演】XX组这种标签`
-
-  // === 第一步：AI 角色分析 ===
-  let parsed: any;
-  try {
-    console.log('[CharacterCalibrator] 开始 AI 角色分析...');
-    // 统一从服务映射获取配置
-    // 【关键】maxTokens 设为 16384，避免推理模型（如 GLM-4.7）在思考时耗尽默认 4096 token
-    const result = await callFeatureAPI('script_analysis', systemPrompt, userPrompt, {
-      temperature: 0, // 确保结果一致性
-      maxTokens: 16384, // 推理模型需要更多 token（reasoning + content）
-    });
-    
-    console.log('[CharacterCalibrator] AI 返回内容长度:', result?.length);
-    
-    // 解析JSON结果，增强容错
-    let cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const jsonStart = cleaned.indexOf('{');
-    const jsonEnd = cleaned.lastIndexOf('}');
-    if (jsonStart !== -1 && jsonEnd !== -1) {
-      cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
-    }
-    
-    // 尝试修复不完整的 JSON
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (jsonErr) {
-      console.warn('[CharacterCalibrator] JSON解析失败，尝试修复...');
-      // 尝试截取到最后一个完整的角色对象
-      const lastCompleteChar = cleaned.lastIndexOf('},');
-      if (lastCompleteChar > 0) {
-        // 截取到最后一个完整角色，补全 JSON
-        const truncated = cleaned.slice(0, lastCompleteChar + 1);
-        const fixedJson = truncated + '],"filteredWords":[],"mergeRecords":[],"analysisNotes":"部分结果"}';
+1. 有名字的全部保留！有称呼的全部保留！不确定的保留！
+2. 只过滤纯职业词、数字编号、群体词
+3. 不要生成群演XX组标签`;
+        return { system: systemPrompt, user };
+      },
+      parseResult: (raw) => {
+        // 增强容错的 JSON 解析
+        let cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const jsonStart = cleaned.indexOf('{');
+        const jsonEnd = cleaned.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          cleaned = cleaned.slice(jsonStart, jsonEnd + 1);
+        }
+        
+        let batchParsed: any;
         try {
-          parsed = JSON.parse(fixedJson);
-          console.log('[CharacterCalibrator] JSON修复成功');
-        } catch {
-          // 再尝试找 characters 数组
-          const charsMatch = cleaned.match(/"characters"\s*:\s*\[(.*?)\]/s);
-          if (charsMatch) {
+          batchParsed = JSON.parse(cleaned);
+        } catch (jsonErr) {
+          console.warn('[CharacterCalibrator] 批次JSON解析失败，尝试修复...');
+          const lastCompleteChar = cleaned.lastIndexOf('},');
+          if (lastCompleteChar > 0) {
+            const truncated = cleaned.slice(0, lastCompleteChar + 1);
+            const fixedJson = truncated + '],"filteredWords":[],"mergeRecords":[],"analysisNotes":"部分结果"}';
             try {
-              const charsArray = JSON.parse('[' + charsMatch[1] + ']');
-              parsed = { characters: charsArray, filteredWords: [], mergeRecords: [], analysisNotes: '部分结果' };
-              console.log('[CharacterCalibrator] 从部分JSON提取成功');
+              batchParsed = JSON.parse(fixedJson);
             } catch {
-              throw jsonErr;
+              const charsMatch = cleaned.match(/"characters"\s*:\s*\[(.*?)\]/s);
+              if (charsMatch) {
+                try {
+                  const charsArray = JSON.parse('[' + charsMatch[1] + ']');
+                  batchParsed = { characters: charsArray, filteredWords: [], mergeRecords: [], analysisNotes: '部分结果' };
+                } catch {
+                  throw jsonErr;
+                }
+              } else {
+                throw jsonErr;
+              }
             }
           } else {
             throw jsonErr;
           }
         }
-      } else {
-        throw jsonErr;
-      }
+        
+        // 收集聚合字段
+        allFilteredWords.push(...(batchParsed.filteredWords || []));
+        allMergeRecords.push(...(batchParsed.mergeRecords || []));
+        if (batchParsed.analysisNotes) allAnalysisNotes.push(batchParsed.analysisNotes);
+        
+        // 返回 Map<角色名, 角色数据>
+        const map = new Map<string, any>();
+        for (const c of (batchParsed.characters || [])) {
+          if (c.name) map.set(c.name, c);
+        }
+        return map;
+      },
+      estimateItemTokens: (item) => estimateTokens(
+        `${item.name} [出场${item.sceneCount}场, 对白${item.dialogueCount}条] ` +
+        item.dialogueSamples.join(' ')
+      ),
+      estimateItemOutputTokens: () => 200,
+      apiOptions: {
+        temperature: 0,
+        maxTokens: 16384,
+      },
+    });
+    
+    if (failedBatches > 0) {
+      console.warn(`[CharacterCalibrator] ${failedBatches} 批次失败，使用部分结果`);
     }
     
-    console.log('[CharacterCalibrator] AI 角色分析成功，解析到', (parsed.characters || []).length, '个角色');
+    parsed = {
+      characters: Array.from(charResults.values()),
+      filteredWords: [...new Set(allFilteredWords)],
+      mergeRecords: allMergeRecords,
+      analysisNotes: allAnalysisNotes.join('; ') || '批处理完成',
+    };
+    
+    console.log('[CharacterCalibrator] AI 角色分析成功，解析到', parsed.characters.length, '个角色');
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     console.error('[CharacterCalibrator] AI角色分析失败:', err.message);

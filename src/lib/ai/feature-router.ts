@@ -44,6 +44,8 @@ const FEATURE_PLATFORM_MAP: Partial<Record<AIFeature, string>> = {
   video_generation: 'memefast',
   image_understanding: 'memefast',
   chat: 'memefast',
+  freedom_image: 'memefast',
+  freedom_video: 'memefast',
 };
 
 

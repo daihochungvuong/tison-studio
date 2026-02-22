@@ -23,6 +23,7 @@ import {
   convertToScriptData,
 } from "./episode-parser";
 import { callFeatureAPI } from "@/lib/ai/feature-router";
+import { processBatched } from "@/lib/ai/batch-processor";
 import { useScriptStore } from "@/stores/script-store";
 import { useCharacterLibraryStore } from "@/stores/character-library-store";
 import { useAPIConfigStore } from "@/stores/api-config-store";
@@ -818,80 +819,6 @@ export function getMissingTitleEpisodes(projectId: string): EpisodeRawScript[] {
   return project.episodeRawScripts.filter(ep => isMissingTitle(ep.title));
 }
 
-/**
- * 调用 AI API 生成集数标题 - 复用 callChatAPI
- */
-async function callAIForTitles(
-  episodes: Array<{ index: number; contentSummary: string }>,
-  globalContext: {
-    title: string;       // 剧名
-    outline: string;     // 大纲
-    characterBios: string; // 主要人物
-    totalEpisodes: number; // 总集数
-  }
-): Promise<Record<number, string>> {
-  const { title, outline, characterBios, totalEpisodes } = globalContext;
-  
-  const systemPrompt = `你是好莱坞资深编剧，拥有艾美奖最佳编剧提名经历。
-
-你的专业能力：
-- 精通剧集命名艺术：能用简短有力的标题捕捉每集核心冲突和情感转折
-- 叙事结构把控：理解商战、家族、情感等不同类型剧集的命名风格
-- 市场敏感度：知道什么样的标题能吸引观众，提升点击率
-
-你的任务是根据剧本的全局背景和每集内容，为每集生成简短有吸引力的标题。
-
-【剧本信息】
-剧名：${title}
-总集数：${totalEpisodes}集
-
-【故事大纲】
-${outline.slice(0, 1500)}
-
-【主要人物】
-${characterBios.slice(0, 1000)}
-
-【要求】
-1. 标题要能概括该集的主要内容或转折点
-2. 标题长度控制在6-15个字
-3. 风格要符合剧本类型（如商战剧用商战术语，武侠剧用江湖气息）
-4. 标题之间要有连贯性，体现剧情发展
-
-请以JSON格式返回，格式为：
-{
-  "titles": {
-    "1": "第1集标题",
-    "2": "第2集标题"
-  }
-}`;
-
-  const episodeContents = episodes.map(ep => 
-    `第${ep.index}集内容摘要：${ep.contentSummary}`
-  ).join('\n\n');
-  
-  const userPrompt = `请为以下集数生成标题：\n\n${episodeContents}`;
-  
-  // 统一从服务映射获取配置
-  const result = await callFeatureAPI('script_analysis', systemPrompt, userPrompt);
-  
-  // 解析 JSON 结果
-  try {
-    // 清理可能的 markdown 标记
-    let cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    
-    const titles: Record<number, string> = {};
-    if (parsed.titles) {
-      for (const [key, value] of Object.entries(parsed.titles)) {
-        titles[parseInt(key)] = value as string;
-      }
-    }
-    return titles;
-  } catch (e) {
-    console.error('[calibrate] Failed to parse AI response:', result);
-    throw new Error('解析 AI 响应失败');
-  }
-}
 
 /**
  * 从集内容中提取摘要
@@ -965,74 +892,97 @@ export async function calibrateEpisodeTitles(
   };
   
   try {
-    // 获取用户设置的并发数
-    const concurrency = useAPIConfigStore.getState().concurrency || 1;
-    const batchSize = 10; // 每批最多 10 集
-    let calibratedCount = 0;
+    // 准备 batch items
+    type TitleItem = { index: number; contentSummary: string };
+    const items: TitleItem[] = missingEpisodes.map(ep => ({
+      index: ep.episodeIndex,
+      contentSummary: extractEpisodeSummary(ep),
+    }));
     
-    // 准备所有批次任务
-    const allBatches: { batch: typeof missingEpisodes; batchNum: number; batchData: any[] }[] = [];
-    for (let i = 0; i < missingEpisodes.length; i += batchSize) {
-      const batch = missingEpisodes.slice(i, i + batchSize);
-      const batchNum = Math.floor(i / batchSize) + 1;
-      const batchData = batch.map(ep => ({
-        index: ep.episodeIndex,
-        contentSummary: extractEpisodeSummary(ep),
-      }));
-      allBatches.push({ batch, batchNum, batchData });
-    }
-    
-    const totalBatches = allBatches.length;
-    console.log(`🚀 [集标题校准] 待处理: ${totalMissing} 集，${totalBatches} 批，并发数: ${concurrency}`);
-    
-    // 错开启动的并发控制：每5秒启动一个新批次，同时最多 concurrency 个
-    let completedBatches = 0;
-    const settledBatchResults = await runStaggered(
-      allBatches.map(({ batch, batchNum, batchData }) => async () => {
-        console.log(`[集标题校准] 🚀 启动批次 ${batchNum}/${totalBatches}`);
-        onProgress?.(calibratedCount, totalMissing, `🚀 处理批次 ${batchNum}/${totalBatches}...`);
-        
-        try {
-          const titles = await callAIForTitles(batchData, globalContext);
-          completedBatches++;
-          console.log(`[集标题校准] ✅ 批次 ${batchNum} 完成，进度: ${completedBatches}/${totalBatches}`);
-          return { batch, titles, success: true as const };
-        } catch (err) {
-          completedBatches++;
-          console.error(`[集标题校准] ❌ 批次 ${batchNum} 失败:`, err);
-          return { batch, titles: {} as Record<number, string>, success: false as const };
-        }
-      }),
-      concurrency,
-      5000
-    );
-    const results = settledBatchResults
-      .filter((r): r is { status: 'fulfilled'; value: any } => r.status === 'fulfilled')
-      .map(r => r.value);
-    
-    // 处理结果
-    for (const { batch, titles, success } of results) {
-      if (success) {
-        for (const ep of batch) {
-          const newTitle = titles[ep.episodeIndex];
-          if (newTitle) {
-            store.updateEpisodeRawScript(projectId, ep.episodeIndex, {
-              title: `第${ep.episodeIndex}集：${newTitle}`,
-            });
-            
-            const scriptData = store.projects[projectId]?.scriptData;
-            if (scriptData) {
-              const epData = scriptData.episodes.find(e => e.index === ep.episodeIndex);
-              if (epData) {
-                epData.title = `第${ep.episodeIndex}集：${newTitle}`;
-                store.setScriptData(projectId, { ...scriptData });
-              }
-            }
-            
-            calibratedCount++;
+    const { results, failedBatches, totalBatches } = await processBatched<TitleItem, string>({
+      items,
+      feature: 'script_analysis',
+      buildPrompts: (batch) => {
+        const { title, outline, characterBios, totalEpisodes } = globalContext;
+        const system = `你是好莱坞资深编剧，拥有艾美奖最佳编剧提名经历。
+
+你的专业能力：
+- 精通剧集命名艺术：能用简短有力的标题捕捉每集核心冲突和情感转折
+- 叙事结构把控：理解商战、家族、情感等不同类型剧集的命名风格
+- 市场敏感度：知道什么样的标题能吸引观众，提升点击率
+
+你的任务是根据剧本的全局背景和每集内容，为每集生成简短有吸引力的标题。
+
+【剧本信息】
+剧名：${title}
+总集数：${totalEpisodes}集
+
+【故事大纲】
+${outline.slice(0, 1500)}
+
+【主要人物】
+${characterBios.slice(0, 1000)}
+
+【要求】
+1. 标题要能概括该集的主要内容或转折点
+2. 标题长度控制在6-15个字
+3. 风格要符合剧本类型（如商战剧用商战术语，武侠剧用江湖气息）
+4. 标题之间要有连贯性，体现剧情发展
+
+请以JSON格式返回，格式为：
+{
+  "titles": {
+    "1": "第1集标题",
+    "2": "第2集标题"
+  }
+}`;
+        const episodeContents = batch.map(ep => 
+          `第${ep.index}集内容摘要：${ep.contentSummary}`
+        ).join('\n\n');
+        const user = `请为以下集数生成标题：\n\n${episodeContents}`;
+        return { system, user };
+      },
+      parseResult: (raw) => {
+        let cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        const result = new Map<string, string>();
+        if (parsed.titles) {
+          for (const [key, value] of Object.entries(parsed.titles)) {
+            result.set(key, value as string);
           }
         }
+        return result;
+      },
+      estimateItemOutputTokens: () => 30, // 标题很短，每集约 30 tokens
+      onProgress: (completed, total, message) => {
+        onProgress?.(completed, total, `[标题校准] ${message}`);
+      },
+    });
+    
+    // 处理结果
+    let calibratedCount = 0;
+    for (const ep of missingEpisodes) {
+      const newTitle = results.get(String(ep.episodeIndex));
+      if (newTitle) {
+        store.updateEpisodeRawScript(projectId, ep.episodeIndex, {
+          title: `第${ep.episodeIndex}集：${newTitle}`,
+        });
+        
+        const scriptData = store.projects[projectId]?.scriptData;
+        if (scriptData) {
+          const epData = scriptData.episodes.find(e => e.index === ep.episodeIndex);
+          if (epData) {
+            epData.title = `第${ep.episodeIndex}集：${newTitle}`;
+            store.setScriptData(projectId, { ...scriptData });
+          }
+        }
+        
+        calibratedCount++;
       }
+    }
+    
+    if (failedBatches > 0) {
+      console.warn(`[集标题校准] ${failedBatches}/${totalBatches} 批次失败`);
     }
     
     onProgress?.(calibratedCount, totalMissing, `已校准 ${calibratedCount}/${totalMissing} 集`);
@@ -2033,111 +1983,21 @@ export async function generateEpisodeSynopses(
   onProgress?.(0, totalEpisodes, `开始为 ${totalEpisodes} 集生成大纲...`);
   
   try {
-    // 获取用户设置的并发数
-    const concurrency = useAPIConfigStore.getState().concurrency || 1;
-    const batchSize = 5; // 每批最多 5 集
-    let generatedCount = 0;
+    // 准备 batch items
+    type SynopsisItem = { index: number; title: string; contentSummary: string };
+    type SynopsisResult = { synopsis: string; keyEvents: string[] };
+    const items: SynopsisItem[] = episodes.map(ep => ({
+      index: ep.episodeIndex,
+      title: ep.title,
+      contentSummary: extractEpisodeSummary(ep),
+    }));
     
-    // 准备所有批次任务
-    const allBatches: { batch: typeof episodes; batchNum: number; batchData: any[] }[] = [];
-    for (let i = 0; i < episodes.length; i += batchSize) {
-      const batch = episodes.slice(i, i + batchSize);
-      const batchNum = Math.floor(i / batchSize) + 1;
-      const batchData = batch.map(ep => ({
-        index: ep.episodeIndex,
-        title: ep.title,
-        contentSummary: extractEpisodeSummary(ep),
-      }));
-      allBatches.push({ batch, batchNum, batchData });
-    }
-    
-    const totalBatches = allBatches.length;
-    console.log(`🚀 [集大纲生成] 待处理: ${totalEpisodes} 集，${totalBatches} 批，并发数: ${concurrency}`);
-    
-    // 错开启动的并发控制：每5秒启动一个新批次，同时最多 concurrency 个
-    let completedBatches = 0;
-    const settledBatchResults = await runStaggered(
-      allBatches.map(({ batch, batchNum, batchData }) => async () => {
-        console.log(`[集大纲生成] 🚀 启动批次 ${batchNum}/${totalBatches}`);
-        onProgress?.(generatedCount, totalEpisodes, `🚀 处理批次 ${batchNum}/${totalBatches}...`);
-        
-        try {
-          const synopses = await callAIForSynopses(batchData, globalContext);
-          completedBatches++;
-          console.log(`[集大纲生成] ✅ 批次 ${batchNum} 完成，进度: ${completedBatches}/${totalBatches}`);
-          return { batch, synopses, success: true as const };
-        } catch (err) {
-          completedBatches++;
-          console.error(`[集大纲生成] ❌ 批次 ${batchNum} 失败:`, err);
-          return { batch, synopses: {} as Record<number, { synopsis: string; keyEvents: string[] }>, success: false as const };
-        }
-      }),
-      concurrency,
-      5000
-    );
-    const results = settledBatchResults
-      .filter((r): r is { status: 'fulfilled'; value: any } => r.status === 'fulfilled')
-      .map(r => r.value);
-    
-    // 处理结果
-    for (const { batch, synopses, success } of results) {
-      if (success) {
-        for (const ep of batch) {
-          const res = synopses[ep.episodeIndex];
-          if (res) {
-            store.updateEpisodeRawScript(projectId, ep.episodeIndex, {
-              synopsis: res.synopsis,
-              keyEvents: res.keyEvents,
-              synopsisGeneratedAt: Date.now(),
-            });
-            generatedCount++;
-          }
-        }
-      }
-    }
-    
-    onProgress?.(generatedCount, totalEpisodes, `已生成 ${generatedCount}/${totalEpisodes} 集大纲`);
-    
-    // 大纲生成完成后，更新项目元数据 MD
-    const updatedMetadata = exportProjectMetadata(projectId);
-    store.setMetadataMarkdown(projectId, updatedMetadata);
-    console.log('[generateSynopses] 元数据已更新，包含新生成的大纲');
-    
-    return {
-      success: true,
-      generatedCount,
-      totalEpisodes,
-    };
-  } catch (error) {
-    console.error('[generateSynopses] Error:', error);
-    return {
-      success: false,
-      generatedCount: 0,
-      totalEpisodes,
-      error: error instanceof Error ? error.message : '大纲生成失败',
-    };
-  }
-}
-
-/**
- * 调用 AI 生成集大纲
- */
-async function callAIForSynopses(
-  episodes: Array<{ index: number; title: string; contentSummary: string }>,
-  globalContext: {
-    title: string;
-    genre: string;
-    era?: string;
-    worldSetting?: string;
-    themes?: string[];
-    outline: string;
-    characterBios: string;
-    totalEpisodes: number;
-  }
-): Promise<Record<number, { synopsis: string; keyEvents: string[] }>> {
-  const { title, genre, era, worldSetting, themes, outline, characterBios, totalEpisodes } = globalContext;
-  
-  const systemPrompt = `你是好莱坞资深剧本医生(Script Doctor)，擅长分析剧本结构和叙事节奏。
+    const { results, failedBatches, totalBatches } = await processBatched<SynopsisItem, SynopsisResult>({
+      items,
+      feature: 'script_analysis',
+      buildPrompts: (batch) => {
+        const { title, genre, era, worldSetting, themes, outline, characterBios, totalEpisodes: total } = globalContext;
+        const system = `你是好莱坞资深剧本医生(Script Doctor)，擅长分析剧本结构和叙事节奏。
 
 你的专业能力：
 - 剧本结构分析：能快速提炼每集的核心冲突、转折点和情感高潮
@@ -2152,7 +2012,7 @@ async function callAIForSynopses(
 ${era ? `时代背景：${era}` : ''}
 ${worldSetting ? `世界观：${worldSetting.slice(0, 200)}` : ''}
 ${themes && themes.length > 0 ? `主题：${themes.join('、')}` : ''}
-总集数：${totalEpisodes}集
+总集数：${total}集
 
 【故事大纲】
 ${outline.slice(0, 1000)}
@@ -2179,35 +2039,71 @@ ${characterBios.slice(0, 800)}
     }
   }
 }`;
-
-  const episodeContents = episodes.map(ep => 
-    `第${ep.index}集「${ep.title}」：
-${ep.contentSummary}`
-  ).join('\n\n---\n\n');
-  
-  const userPrompt = `请为以下集数生成大纲和关键事件：\n\n${episodeContents}`;
-  
-  // 统一从服务映射获取配置
-  const result = await callFeatureAPI('script_analysis', systemPrompt, userPrompt);
-  
-  try {
-    let cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+        const episodeContents = batch.map(ep => 
+          `第${ep.index}集「${ep.title}」：\n${ep.contentSummary}`
+        ).join('\n\n---\n\n');
+        const user = `请为以下集数生成大纲和关键事件：\n\n${episodeContents}`;
+        return { system, user };
+      },
+      parseResult: (raw) => {
+        let cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        const result = new Map<string, SynopsisResult>();
+        if (parsed.synopses) {
+          for (const [key, value] of Object.entries(parsed.synopses)) {
+            const v = value as SynopsisResult;
+            result.set(key, {
+              synopsis: v.synopsis || '',
+              keyEvents: v.keyEvents || [],
+            });
+          }
+        }
+        return result;
+      },
+      estimateItemOutputTokens: () => 200, // 大纲 + keyEvents 约 200 tokens
+      onProgress: (completed, total, message) => {
+        onProgress?.(completed, total, `[大纲生成] ${message}`);
+      },
+    });
     
-    const synopses: Record<number, { synopsis: string; keyEvents: string[] }> = {};
-    if (parsed.synopses) {
-      for (const [key, value] of Object.entries(parsed.synopses)) {
-        const v = value as { synopsis: string; keyEvents: string[] };
-        synopses[parseInt(key)] = {
-          synopsis: v.synopsis || '',
-          keyEvents: v.keyEvents || [],
-        };
+    // 处理结果
+    let generatedCount = 0;
+    for (const ep of episodes) {
+      const res = results.get(String(ep.episodeIndex));
+      if (res) {
+        store.updateEpisodeRawScript(projectId, ep.episodeIndex, {
+          synopsis: res.synopsis,
+          keyEvents: res.keyEvents,
+          synopsisGeneratedAt: Date.now(),
+        });
+        generatedCount++;
       }
     }
-    return synopses;
-  } catch (e) {
-    console.error('[generateSynopses] Failed to parse AI response:', result);
-    throw new Error('解析 AI 响应失败');
+    
+    if (failedBatches > 0) {
+      console.warn(`[集大纲生成] ${failedBatches}/${totalBatches} 批次失败`);
+    }
+    
+    onProgress?.(generatedCount, totalEpisodes, `已生成 ${generatedCount}/${totalEpisodes} 集大纲`);
+    
+    // 大纲生成完成后，更新项目元数据 MD
+    const updatedMetadata = exportProjectMetadata(projectId);
+    store.setMetadataMarkdown(projectId, updatedMetadata);
+    console.log('[generateSynopses] 元数据已更新，包含新生成的大纲');
+    
+    return {
+      success: true,
+      generatedCount,
+      totalEpisodes,
+    };
+  } catch (error) {
+    console.error('[generateSynopses] Error:', error);
+    return {
+      success: false,
+      generatedCount: 0,
+      totalEpisodes,
+      error: error instanceof Error ? error.message : '大纲生成失败',
+    };
   }
 }
 

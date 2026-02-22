@@ -118,9 +118,10 @@ export function classifyModelByName(modelName: string): ModelCapability[] {
  * 基于 MemeFast 等平台 /v1/models 返回的 supported_endpoint_types 字段
  */
 export type ModelApiFormat =
-  | 'openai_chat'        // /v1/chat/completions （文本/对话，也用于 Gemini 图片生成）
-  | 'openai_images'      // /v1/images/generations （标准图片生成）
-  | 'openai_video'       // /v1/videos/generations （标准视频生成）
+  | 'openai_chat'        // /v1/chat/completions （文本/对话，也用于 Gemini 图片生成）
+  | 'openai_images'      // /v1/images/generations （标准图片生成）
+  | 'openai_video'       // /v1/videos/generations （标准视频生成）
+  | 'kling_image'        // /kling/v1/images/generations 或 /kling/v1/images/omni-image
   | 'unsupported';       // 不支持的端点格式
 
 // MemeFast supported_endpoint_types 值 → 我们的图片 API 格式
@@ -171,6 +172,10 @@ export function resolveImageApiFormat(endpointTypes: string[] | undefined, model
   // 2. Fallback: 根据模型名称推断 API 格式
   if (modelName) {
     const name = modelName.toLowerCase();
+    // Kling image models → native /kling/v1/images/* endpoint
+    if (/^kling-(image|omni-image)$/i.test(name)) {
+      return 'kling_image';
+    }
     // Gemini image models → chat completions 多模态
     if (name.includes('gemini') && (name.includes('image') || name.includes('imagen'))) {
       return 'openai_chat';

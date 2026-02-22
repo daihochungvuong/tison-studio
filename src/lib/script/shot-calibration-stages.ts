@@ -13,7 +13,7 @@
  * Stage 5: 动态+尾帧提示词 (4 fields) — videoPrompt + endFramePrompt
  */
 
-import { callFeatureAPI } from '@/lib/ai/feature-router';
+import { processBatched } from '@/lib/ai/batch-processor';
 import { getStyleDescription, getMediaType } from '@/lib/constants/visual-styles';
 import { buildCinematographyGuidance } from '@/lib/constants/cinematography-profiles';
 import { getMediaTypeGuidance } from '@/lib/generation/media-type-tokens';
@@ -89,11 +89,9 @@ export async function calibrateShotsMultiStage(
   const mt = getMediaType(styleId || 'cinematic');
   const mediaTypeHint = mt !== 'cinematic' ? `\n【媒介类型】${getMediaTypeGuidance(mt)}` : '';
 
-  // 辅助：调用 AI 并解析 JSON
-  async function callStage(stageName: string, systemPrompt: string, userPrompt: string, maxTokens: number): Promise<Record<string, any>> {
-    console.log(`[MultiStage] ${stageName} - system: ${systemPrompt.length}字, user: ${userPrompt.length}字, maxTokens: ${maxTokens}`);
-    const result = await callFeatureAPI('script_analysis', systemPrompt, userPrompt, { maxTokens });
-    let cleaned = result.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+  // JSON 解析辅助
+  function parseStageJSON(raw: string): Record<string, any> {
+    let cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     const jsonStart = cleaned.indexOf('{');
     const jsonEnd = cleaned.lastIndexOf('}');
     if (jsonStart !== -1 && jsonEnd > jsonStart) {
@@ -101,6 +99,43 @@ export async function calibrateShotsMultiStage(
     }
     const parsed = JSON.parse(cleaned);
     return parsed.shots || parsed || {};
+  }
+
+  // 通用 Stage 执行器：使用 processBatched 自动分批（30+ shots 时自动拆分 sub-batch）
+  async function runStage(
+    stageName: string,
+    buildPrompts: (batch: ShotInputData[]) => { system: string; user: string },
+    outputTokensPerItem: number,
+    maxTokens: number,
+  ): Promise<void> {
+    console.log(`[MultiStage] ${stageName}`);
+    const { results, failedBatches } = await processBatched<ShotInputData, Record<string, any>>({
+      items: shots,
+      feature: 'script_analysis',
+      buildPrompts,
+      parseResult: (raw, batch) => {
+        const shotsResult = parseStageJSON(raw);
+        const result = new Map<string, Record<string, any>>();
+        for (const item of batch) {
+          if (shotsResult[item.shotId]) {
+            result.set(item.shotId, shotsResult[item.shotId]);
+          }
+        }
+        return result;
+      },
+      estimateItemOutputTokens: () => outputTokensPerItem,
+      apiOptions: { maxTokens },
+    });
+
+    for (const shot of shots) {
+      const stageResult = results.get(shot.shotId);
+      if (stageResult) {
+        Object.assign(merged[shot.shotId], stageResult);
+      }
+    }
+    if (failedBatches > 0) {
+      console.warn(`[MultiStage] ${stageName}: ${failedBatches} 批次失败`);
+    }
   }
 
   // 初始化合并结果
@@ -131,16 +166,14 @@ ${contextLine}${episodeSynopsis ? `\n本集大纲：${episodeSynopsis}` : ''}${e
 
 格式：{"shots":{"shot_id":{...}}}`
 
-  const s1Shots = shots.map(s => {
-    const chars = s.characterNames?.join('、') || '无';
-    return `ID: ${s.shotId}\n场景: ${s.sceneLocation} | 时间: ${s.sceneTime}${s.sceneWeather ? ` | 天气: ${s.sceneWeather}` : ''}\n原文: ${s.sourceText || s.actionSummary}${s.dialogue ? `\n对白: 「${s.dialogue}」` : ''}\n角色: ${chars} | 氛围: ${s.sceneAtmosphere}\n当前: 景别=${s.currentShotSize || '?'} 运动=${s.currentCameraMovement || '?'}`;
-  }).join('\n\n---\n\n');
-
   try {
-    const s1 = await callStage('Stage1-叙事骨架', s1System, `分析以下分镜：\n\n${s1Shots}`, 4096);
-    for (const shot of shots) {
-      if (s1[shot.shotId]) Object.assign(merged[shot.shotId], s1[shot.shotId]);
-    }
+    await runStage('Stage 1/5: 叙事骨架', (batch) => {
+      const userShots = batch.map(s => {
+        const chars = s.characterNames?.join('、') || '无';
+        return `ID: ${s.shotId}\n场景: ${s.sceneLocation} | 时间: ${s.sceneTime}${s.sceneWeather ? ` | 天气: ${s.sceneWeather}` : ''}\n原文: ${s.sourceText || s.actionSummary}${s.dialogue ? `\n对白: 「${s.dialogue}」` : ''}\n角色: ${chars} | 氛围: ${s.sceneAtmosphere}\n当前: 景别=${s.currentShotSize || '?'} 运动=${s.currentCameraMovement || '?'}`;
+      }).join('\n\n---\n\n');
+      return { system: s1System, user: `分析以下分镜：\n\n${userShots}` };
+    }, 200, 4096);
   } catch (e) {
     console.error('[MultiStage] Stage 1 failed:', e);
   }
@@ -161,17 +194,15 @@ ${contextLine}${episodeSynopsis ? `\n本集大纲：${episodeSynopsis}` : ''}${e
 
 格式：{"shots":{"shot_id":{"visualDescription":"","visualPrompt":"","characterNames":[],"emotionTags":[],"ambientSound":"","soundEffect":""}}}`;
 
-  const s2Shots = shots.map(s => {
-    const prev = merged[s.shotId] || {};
-    const hasFlashback = /闪回|叠画|回忆|穿插/.test(s.sourceText || '');
-    return `ID: ${s.shotId}\n【主场景（不可更改）】: ${s.sceneLocation}${hasFlashback ? ' ⚠️含闪回，主场景不变！' : ''}\n原文: ${s.sourceText || s.actionSummary}${s.dialogue ? `\n对白: 「${s.dialogue}」` : ''}\n角色: ${s.characterNames?.join('、') || '无'}\n叙事: 景别=${prev.shotSize || '?'} | 功能=${prev.narrativeFunction || '?'} | 目的=${prev.shotPurpose || '?'}\n焦点: ${prev.visualFocus || '?'} | 布局: ${prev.characterBlocking || '?'}`;
-  }).join('\n\n---\n\n');
-
   try {
-    const s2 = await callStage('Stage2-视觉描述', s2System, `请生成视觉描述：\n\n${s2Shots}`, 4096);
-    for (const shot of shots) {
-      if (s2[shot.shotId]) Object.assign(merged[shot.shotId], s2[shot.shotId]);
-    }
+    await runStage('Stage 2/5: 视觉描述', (batch) => {
+      const userShots = batch.map(s => {
+        const prev = merged[s.shotId] || {};
+        const hasFlashback = /闪回|叠画|回忆|穿插/.test(s.sourceText || '');
+        return `ID: ${s.shotId}\n【主场景（不可更改）】: ${s.sceneLocation}${hasFlashback ? ' ⚠️含闪回，主场景不变！' : ''}\n原文: ${s.sourceText || s.actionSummary}${s.dialogue ? `\n对白: 「${s.dialogue}」` : ''}\n角色: ${s.characterNames?.join('、') || '无'}\n叙事: 景别=${prev.shotSize || '?'} | 功能=${prev.narrativeFunction || '?'} | 目的=${prev.shotPurpose || '?'}\n焦点: ${prev.visualFocus || '?'} | 布局: ${prev.characterBlocking || '?'}`;
+      }).join('\n\n---\n\n');
+      return { system: s2System, user: `请生成视觉描述：\n\n${userShots}` };
+    }, 200, 4096);
   } catch (e) {
     console.error('[MultiStage] Stage 2 failed:', e);
   }
@@ -201,22 +232,20 @@ ${contextLine}${episodeSynopsis ? `\n本集大纲：${episodeSynopsis}` : ''}${e
 
 格式：{"shots":{"shot_id":{...}}}`;
 
-  const s3Shots = shots.map(s => {
-    const prev = merged[s.shotId] || {};
-    const artParts = [
-      s.architectureStyle ? `建筑:${s.architectureStyle}` : '',
-      s.colorPalette ? `色彩:${s.colorPalette}` : '',
-      s.eraDetails ? `时代:${s.eraDetails}` : '',
-      s.lightingDesign ? `光影:${s.lightingDesign}` : '',
-    ].filter(Boolean);
-    return `ID: ${s.shotId}\n场景: ${s.sceneLocation} | 时间: ${s.sceneTime}${s.sceneWeather ? ` | 天气:${s.sceneWeather}` : ''}\n景别: ${prev.shotSize || '?'} | 运动: ${prev.cameraMovement || '?'} | 节奏: ${prev.rhythm || '?'}\n视觉描述: ${prev.visualDescription || '?'}${artParts.length ? `\n场景美术: ${artParts.join(' | ')}` : ''}`;
-  }).join('\n\n---\n\n');
-
   try {
-    const s3 = await callStage('Stage3-拍摄控制', s3System, `请确定拍摄参数：\n\n${s3Shots}`, 4096);
-    for (const shot of shots) {
-      if (s3[shot.shotId]) Object.assign(merged[shot.shotId], s3[shot.shotId]);
-    }
+    await runStage('Stage 3/5: 拍摄控制', (batch) => {
+      const userShots = batch.map(s => {
+        const prev = merged[s.shotId] || {};
+        const artParts = [
+          s.architectureStyle ? `建筑:${s.architectureStyle}` : '',
+          s.colorPalette ? `色彩:${s.colorPalette}` : '',
+          s.eraDetails ? `时代:${s.eraDetails}` : '',
+          s.lightingDesign ? `光影:${s.lightingDesign}` : '',
+        ].filter(Boolean);
+        return `ID: ${s.shotId}\n场景: ${s.sceneLocation} | 时间: ${s.sceneTime}${s.sceneWeather ? ` | 天气:${s.sceneWeather}` : ''}\n景别: ${prev.shotSize || '?'} | 运动: ${prev.cameraMovement || '?'} | 节奏: ${prev.rhythm || '?'}\n视觉描述: ${prev.visualDescription || '?'}${artParts.length ? `\n场景美术: ${artParts.join(' | ')}` : ''}`;
+      }).join('\n\n---\n\n');
+      return { system: s3System, user: `请确定拍摄参数：\n\n${userShots}` };
+    }, 200, 4096);
   } catch (e) {
     console.error('[MultiStage] Stage 3 failed:', e);
   }
@@ -247,16 +276,14 @@ needsEndFrame 判断：
 
 格式：{"shots":{"shot_id":{"imagePrompt":"","imagePromptZh":"","needsEndFrame":true}}}`;
 
-  const s4Shots = shots.map(s => {
-    const prev = merged[s.shotId] || {};
-    return `ID: ${s.shotId}\n景别: ${prev.shotSize || '?'} | 角度: ${prev.cameraAngle || '?'} | 焦距: ${prev.focalLength || '?'}\n运动: ${prev.cameraMovement || '?'}\n视觉描述: ${prev.visualDescription || '?'}\n角色: ${(prev.characterNames || s.characterNames || []).join('、')}\n灯光: ${prev.lightingStyle || '?'}, ${prev.lightingDirection || '?'}, ${prev.colorTemperature || '?'}\n景深: ${prev.depthOfField || '?'} | 焦点: ${prev.focusTarget || '?'}\n大气: ${(prev.atmosphericEffects || []).join(',')}${prev.lightingNotes ? `\n灯光备注: ${prev.lightingNotes}` : ''}`;
-  }).join('\n\n---\n\n');
-
   try {
-    const s4 = await callStage('Stage4-首帧提示词', s4System, `请生成首帧提示词：\n\n${s4Shots}`, 8192);
-    for (const shot of shots) {
-      if (s4[shot.shotId]) Object.assign(merged[shot.shotId], s4[shot.shotId]);
-    }
+    await runStage('Stage 4/5: 首帧提示词', (batch) => {
+      const userShots = batch.map(s => {
+        const prev = merged[s.shotId] || {};
+        return `ID: ${s.shotId}\n景别: ${prev.shotSize || '?'} | 角度: ${prev.cameraAngle || '?'} | 焦距: ${prev.focalLength || '?'}\n运动: ${prev.cameraMovement || '?'}\n视觉描述: ${prev.visualDescription || '?'}\n角色: ${(prev.characterNames || s.characterNames || []).join('、')}\n灯光: ${prev.lightingStyle || '?'}, ${prev.lightingDirection || '?'}, ${prev.colorTemperature || '?'}\n景深: ${prev.depthOfField || '?'} | 焦点: ${prev.focusTarget || '?'}\n大气: ${(prev.atmosphericEffects || []).join(',')}${prev.lightingNotes ? `\n灯光备注: ${prev.lightingNotes}` : ''}`;
+      }).join('\n\n---\n\n');
+      return { system: s4System, user: `请生成首帧提示词：\n\n${userShots}` };
+    }, 400, 8192);
   } catch (e) {
     console.error('[MultiStage] Stage 4 failed:', e);
   }
@@ -282,16 +309,14 @@ endFramePrompt (纯英文, 60-80词) / endFramePromptZh (纯中文, 60-100字)�
 
 格式：{"shots":{"shot_id":{"videoPrompt":"","videoPromptZh":"","endFramePrompt":"","endFramePromptZh":""}}}`;
 
-  const s5Shots = shots.map(s => {
-    const prev = merged[s.shotId] || {};
-    return `ID: ${s.shotId}\n时长: ${prev.duration || '?'}秒 | 运动: ${prev.cameraMovement || '?'}\nneedsEndFrame: ${prev.needsEndFrame ?? true}\n动作: ${s.actionSummary || '?'}${s.dialogue ? `\n对白: 「${s.dialogue}」` : ''}\n首帧(EN): ${prev.imagePrompt || '?'}\n首帧(ZH): ${prev.imagePromptZh || '?'}`;
-  }).join('\n\n---\n\n');
-
   try {
-    const s5 = await callStage('Stage5-动态+尾帧', s5System, `请生成视频和尾帧提示词：\n\n${s5Shots}`, 8192);
-    for (const shot of shots) {
-      if (s5[shot.shotId]) Object.assign(merged[shot.shotId], s5[shot.shotId]);
-    }
+    await runStage('Stage 5/5: 动态+尾帧', (batch) => {
+      const userShots = batch.map(s => {
+        const prev = merged[s.shotId] || {};
+        return `ID: ${s.shotId}\n时长: ${prev.duration || '?'}秒 | 运动: ${prev.cameraMovement || '?'}\nneedsEndFrame: ${prev.needsEndFrame ?? true}\n动作: ${s.actionSummary || '?'}${s.dialogue ? `\n对白: 「${s.dialogue}」` : ''}\n首帧(EN): ${prev.imagePrompt || '?'}\n首帧(ZH): ${prev.imagePromptZh || '?'}`;
+      }).join('\n\n---\n\n');
+      return { system: s5System, user: `请生成视频和尾帧提示词：\n\n${userShots}` };
+    }, 400, 8192);
   } catch (e) {
     console.error('[MultiStage] Stage 5 failed:', e);
   }

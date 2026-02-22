@@ -192,13 +192,13 @@ export function SplitSceneCard({
   const handleSavePrompt = () => {
     if (editingPrompt === 'image') {
       onUpdateImagePrompt(scene.id, scene.imagePrompt, editPromptValue);
-      toast.success(`分镜 ${scene.id + 1} 首帧提示词已更新`);
+      toast.success(`分镜 ${scene.id + 1} 首帧中文提示词已更新`);
     } else if (editingPrompt === 'video') {
       onUpdateVideoPrompt(scene.id, scene.videoPrompt, editPromptValue);
-      toast.success(`分镜 ${scene.id + 1} 视频提示词已更新`);
+      toast.success(`分镜 ${scene.id + 1} 视频中文提示词已更新`);
     } else if (editingPrompt === 'endFrame') {
       onUpdateEndFramePrompt(scene.id, scene.endFramePrompt, editPromptValue);
-      toast.success(`分镜 ${scene.id + 1} 尾帧提示词已更新`);
+      toast.success(`分镜 ${scene.id + 1} 尾帧中文提示词已更新`);
     }
     setEditingPrompt('none');
   };
@@ -254,13 +254,15 @@ export function SplitSceneCard({
   const handleDownloadImage = async (imageUrl: string, filename: string) => {
     try {
       let blob: Blob;
-      if (imageUrl.startsWith('data:')) {
-        const res = await fetch(imageUrl);
-        blob = await res.blob();
-      } else if (imageUrl.startsWith('http')) {
-        const res = await fetch(imageUrl);
+      if (imageUrl.startsWith('local-image://')) {
+        // Electron 自定义协议：通过 IPC 读取为 base64 再转 blob
+        const { readImageAsBase64 } = await import('@/lib/image-storage');
+        const base64 = await readImageAsBase64(imageUrl);
+        if (!base64) throw new Error('无法读取本地图片');
+        const res = await fetch(base64);
         blob = await res.blob();
       } else {
+        // data: / http: / https: 均可直接 fetch
         const res = await fetch(imageUrl);
         blob = await res.blob();
       }

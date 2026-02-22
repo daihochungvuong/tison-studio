@@ -1589,12 +1589,6 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         (async () => {
           try {
             const { extractLastFrameFromVideo } = await import('../director/use-video-generation');
-            const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
-            
-            if (!isImageHostConfigured()) {
-              console.log('[SplitScenes] Image host not configured, skipping frame extraction');
-              return;
-            }
             
             const lastFrameBase64 = await extractLastFrameFromVideo(finalVideoUrl, 0.1);
             if (!lastFrameBase64) {
@@ -1602,17 +1596,10 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
               return;
             }
             
-            const uploadResult = await uploadToImageHost(lastFrameBase64, {
-              name: `scene_${sceneId + 1}_endframe_${Date.now()}`,
-              expiration: 15552000,
-            });
-            
-            if (uploadResult.success && uploadResult.url) {
-              updateSplitSceneEndFrame(sceneId, lastFrameBase64, 'video-extracted', uploadResult.url);
-              console.log('[SplitScenes] Saved video last frame:', uploadResult.url.substring(0, 60));
-            } else {
-              console.warn('[SplitScenes] Failed to upload last frame:', uploadResult.error);
-            }
+            // 持久化到本地文件系统（local-image://），避免 base64 被 partialize 清除
+            const persistResult = await persistSceneImage(lastFrameBase64, sceneId, 'end');
+            updateSplitSceneEndFrame(sceneId, persistResult.localPath, 'video-extracted', persistResult.httpUrl || undefined);
+            console.log('[SplitScenes] Saved video last frame locally:', persistResult.localPath);
           } catch (e) {
             console.warn('[SplitScenes] Error during frame extraction:', e);
           }
@@ -2392,33 +2379,27 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       const imageHostConfigured = isImageHostConfigured();
       
       // 回填：根据任务类型决定更新首帧还是尾帧
+      // 先持久化到本地文件系统（local-image://），避免 base64 被 partialize 清除导致导入后图片丢失
       for (let i = 0; i < pageTasks.length; i++) {
         const task = pageTasks[i];
         const s = task.scene;
         const slicedImage = slicedImages[i];
         if (slicedImage) {
-          // 上传切割后的图片到图床
-          let httpUrl: string | undefined;
-          if (imageHostConfigured) {
-            try {
-              const uploadResult = await uploadToImageHost(slicedImage, {
-                name: `scene_${s.id + 1}_${task.type === 'end' ? 'end' : 'first'}_frame_${Date.now()}`,
-                expiration: 15552000, // 180 days
-              });
-              if (uploadResult.success && uploadResult.url) {
-                httpUrl = uploadResult.url;
-                console.log(`[MergedGen] 分镜 ${s.id + 1} ${task.type === 'end' ? '尾帧' : '首帧'} 已上传到图床:`, httpUrl.substring(0, 60));
-              }
-            } catch (e) {
-              console.warn(`[MergedGen] 分镜 ${s.id + 1} 图片上传图床失败:`, e);
-            }
+          // 持久化到本地 + 图床（与单图生成一致）
+          const frameType = task.type === 'end' ? 'end' as const : 'first' as const;
+          const persistResultLoop = await persistSceneImage(slicedImage, s.id, frameType);
+          const httpUrl = persistResultLoop.httpUrl || undefined;
+          const localPath = persistResultLoop.localPath;
+          
+          if (httpUrl) {
+            console.log(`[MergedGen] 分镜 ${s.id + 1} ${task.type === 'end' ? '尾帧' : '首帧'} 已上传到图床:`, httpUrl.substring(0, 60));
           }
           
           if (task.type === 'end') {
-            updateSplitSceneEndFrame(s.id, slicedImage, 'ai-generated');
+            updateSplitSceneEndFrame(s.id, localPath, 'ai-generated', httpUrl || undefined);
             // 自动保存尾帧到素材库
             addMediaFromUrl({
-              url: slicedImage,
+              url: localPath,
               name: `分镜 ${s.id + 1} - 尾帧`,
               type: 'image',
               source: 'ai-image',
@@ -2427,10 +2408,10 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
             });
           } else {
             // 传递 httpUrl，这样视频生成时可以直接使用，不用再上传
-            updateSplitSceneImage(s.id, slicedImage, s.width, s.height, httpUrl);
+            updateSplitSceneImage(s.id, localPath, s.width, s.height, httpUrl);
             // 自动保存首帧到素材库
             addMediaFromUrl({
-              url: slicedImage,
+              url: localPath,
               name: `分镜 ${s.id + 1} - 首帧`,
               type: 'image',
               source: 'ai-image',

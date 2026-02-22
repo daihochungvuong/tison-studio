@@ -242,6 +242,19 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
+/* Fix: Force panel size constraints to prevent layout collapse in Electron.
+   Uses !important to override react-resizable-panels inline styles. */
+[data-panel-group-direction="horizontal"] > [data-panel] {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+#moyin-left-panel {
+  max-width: 45% !important;
+}
+#moyin-right-panel {
+  min-width: 150px !important;
+}
+
 /* Timeline track styles */
 .track-video {
   background-color: hsl(var(--timeline-video) / 0.2);

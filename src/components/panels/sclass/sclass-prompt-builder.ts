@@ -830,7 +830,7 @@ function buildExtendEditPrompt(
 
   if (genType === 'extend') {
     // --- 延长模式 ---
-    const direction = group.extendDirection === 'forward' ? '向前' : '';
+    const direction = group.extendDirection === 'forward' ? '向前' : '向后';
     const dur = group.totalDuration || 10;
     promptParts.push(`${direction}延长${dur}s视频。`);
   } else {

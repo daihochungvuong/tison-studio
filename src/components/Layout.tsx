@@ -20,6 +20,7 @@ import { DirectorView } from "@/components/panels/director";
 import { SClassView } from "@/components/panels/sclass";
 import { CharactersView } from "@/components/panels/characters";
 import { ScenesView } from "@/components/panels/scenes";
+import { FreedomView } from "@/components/panels/freedom";
 import { MediaView } from "@/components/panels/media";
 import { SettingsPanel } from "@/components/panels/SettingsPanel";
 import { ExportView } from "@/components/panels/export";
@@ -41,7 +42,7 @@ export function Layout() {
 
   // Full-screen views (no resizable panels)
   // 这些板块有自己的多栏布局，不需要全局的预览和属性面板
-  const fullScreenTabs = ["export", "settings", "script", "characters", "scenes"];
+  const fullScreenTabs = ["export", "settings", "script", "characters", "scenes", "freedom"];
   if (fullScreenTabs.includes(activeTab)) {
     return (
       <div className="h-full flex bg-background">
@@ -53,6 +54,7 @@ export function Layout() {
           {activeTab === "script" && <ScriptView />}
           {activeTab === "characters" && <CharactersView />}
           {activeTab === "scenes" && <ScenesView />}
+          {activeTab === "freedom" && <FreedomView />}
         </div>
       </div>
     );
@@ -105,7 +107,7 @@ export function Layout() {
         <ResizablePanel defaultSize={85} minSize={50}>
           <ResizablePanelGroup direction="horizontal">
             {/* Left Panel: Content based on active tab */}
-            <ResizablePanel defaultSize={28} minSize={20} maxSize={45} className="min-w-0">
+            <ResizablePanel id="moyin-left-panel" defaultSize={28} minSize={20} maxSize={45}>
               <div className="h-full overflow-hidden bg-panel border-r border-border">
                 {renderLeftPanel()}
               </div>
@@ -114,7 +116,7 @@ export function Layout() {
             <ResizableHandle />
 
             {/* Center: Preview */}
-            <ResizablePanel defaultSize={52} minSize={25} className="min-w-0">
+            <ResizablePanel id="moyin-center-panel" defaultSize={52} minSize={25}>
               <div className="h-full overflow-hidden">
                 <PreviewPanel />
               </div>
@@ -123,7 +125,7 @@ export function Layout() {
             <ResizableHandle />
 
             {/* Right: Properties */}
-            <ResizablePanel defaultSize={20} minSize={12} maxSize={35} className="min-w-0">
+            <ResizablePanel id="moyin-right-panel" defaultSize={20} minSize={12} maxSize={35}>
               <div className="h-full overflow-hidden border-l border-border">
                 {renderRightPanel()}
               </div>

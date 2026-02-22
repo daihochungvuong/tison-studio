@@ -111,10 +111,10 @@ export function useSClassGeneration() {
         const ref = refs[i];
         const httpUrl = ref.httpUrl || (await convertToHttpUrl(ref.localUrl));
         if (httpUrl) {
-          // 第一张图作为 first_frame，其余仅作为参考
+          // 第一张图作为 first_frame，其余作为 last_frame
           imageWithRoles.push({
             url: httpUrl,
-            role: i === 0 ? "first_frame" : "first_frame",
+            role: i === 0 ? "first_frame" : "last_frame",
           });
         }
       }

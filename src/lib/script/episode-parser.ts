@@ -343,7 +343,81 @@ export function parseScenes(episodeText: string): SceneRawContent[] {
   const sceneMatches = [...episodeText.matchAll(sceneHeaderRegex)];
   
   if (sceneMatches.length === 0) {
-    // 没有找到标准场景头，尝试其他格式
+    // 没有找到标准场景头，尝试宽松的 数字-数字 格式
+    // 匹配如：1-1 规则怪谈世界，集合广场，日  或  1-2 全球同一会议直播间，日
+    const looseSceneRegex = /^\*{0,2}(\d+-\d+)\s+([^\*\n]+)\*{0,2}$/gm;
+    const looseMatches = [...episodeText.matchAll(looseSceneRegex)];
+    
+    if (looseMatches.length > 0) {
+      for (let i = 0; i < looseMatches.length; i++) {
+        const match = looseMatches[i];
+        const sceneNumber = match[1]; // 如 "1-1"
+        const rawDesc = match[2].replace(/\*{1,2}/g, '').trim(); // 如 "规则怪谈世界，集合广场，日"
+        
+        // 从描述中智能提取时间（日/夜/晨/暮等），通常在末尾
+        const timeWords = ['日', '夜', '晨', '暮', '黄昏', '黎明', '清晨', '傍晚'];
+        let timeOfDay = '日'; // 默认值
+        let locationDesc = rawDesc;
+        
+        // 检查描述末尾是否以时间词结尾（可能用逗号、空格分隔）
+        for (const tw of timeWords) {
+          const endPattern = new RegExp(`[，,\\s]${tw}\\s*$`);
+          if (endPattern.test(rawDesc)) {
+            timeOfDay = tw;
+            locationDesc = rawDesc.replace(endPattern, '').trim();
+            break;
+          }
+          // 也处理整个描述就是时间词的情况
+          if (rawDesc === tw) {
+            timeOfDay = tw;
+            locationDesc = '未知地点';
+            break;
+          }
+        }
+        
+        // 尝试从描述中提取 内/外 标记
+        let interior = '';
+        const interiorMatch = locationDesc.match(/[，,\s](内|外|内\/外)\s*/);
+        if (interiorMatch) {
+          interior = interiorMatch[1];
+          locationDesc = locationDesc.replace(interiorMatch[0], '').trim();
+        }
+        
+        // 将中文逗号分隔的地点拼接成可读格式
+        const location = locationDesc.replace(/[，,]/g, ' ').replace(/\s+/g, ' ').trim() || '未知地点';
+        
+        // 构建标准格式的场景头，供下游代码使用
+        const sceneHeader = interior 
+          ? `${sceneNumber} ${timeOfDay} ${interior} ${location}`
+          : `${sceneNumber} ${timeOfDay} ${location}`;
+        
+        // 获取场景内容
+        const startIndex = match.index! + match[0].length;
+        const endIndex = i < looseMatches.length - 1 ? looseMatches[i + 1].index! : episodeText.length;
+        const content = episodeText.slice(startIndex, endIndex).trim();
+        
+        // 解析人物
+        const characters = parseCharacters(content);
+        const dialogues = parseDialogues(content);
+        const actions = parseActions(content);
+        const subtitles = parseSubtitles(content);
+        const weather = detectWeather(content, actions);
+        
+        scenes.push({
+          sceneHeader,
+          characters,
+          content,
+          dialogues,
+          actions,
+          subtitles,
+          weather,
+          timeOfDay,
+        });
+      }
+      return scenes;
+    }
+    
+    // 宽松格式也没匹配到，尝试其他备用格式
     return parseAlternativeSceneFormat(episodeText);
   }
   
@@ -847,9 +921,14 @@ export function convertToScriptData(
       sceneIds.push(sceneId);
       
       // 解析场景头获取时间和地点
+      // 支持两种格式：
+      // 标准格式: "1-1 日 内 地点名" (headerParts: [number, time, interior, ...location])
+      // 宽松格式: "1-1 日 地点名" (headerParts: [number, time, ...location])
       const headerParts = scene.sceneHeader.split(/\s+/);
       const timeOfDay = headerParts[1] || '日';
-      let rawLocation = headerParts.slice(3).join(' ') || headerParts[headerParts.length - 1] || '未知';
+      const hasInterior = headerParts[2] && /^(内|外|内\/外)$/.test(headerParts[2]);
+      const locationStartIndex = hasInterior ? 3 : 2;
+      let rawLocation = headerParts.slice(locationStartIndex).join(' ') || headerParts[headerParts.length - 1] || '未知';
       
       // 清理 location，移除人物信息等无关内容
       const location = cleanLocationString(rawLocation);

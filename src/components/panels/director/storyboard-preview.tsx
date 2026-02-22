@@ -13,6 +13,7 @@ import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { useDirectorStore, useActiveDirectorProject } from "@/stores/director-store";
 import { splitStoryboardImage, type SplitResult } from "@/lib/storyboard/image-splitter";
+import { persistSceneImage } from '@/lib/utils/image-persist';
 import { 
   RefreshCw, 
   Scissors, 
@@ -79,11 +80,13 @@ export function StoryboardPreview({ onBack, onSplitComplete }: StoryboardPreview
     try {
       // If only 1 scene, skip splitting and use the whole image directly
       if (storyboardConfig.sceneCount === 1) {
+        // Persist to local-image:// to survive store serialization (base64 gets stripped)
+        const singlePersist = await persistSceneImage(storyboardImage, 1, 'first');
         const singleScene = {
           id: 1,
           sceneName: '',
           sceneLocation: '',
-          imageDataUrl: storyboardImage,
+          imageDataUrl: singlePersist.localPath,
           imageHttpUrl: null,
           width: 0, // Will be determined when image loads
           height: 0,
@@ -148,49 +151,54 @@ export function StoryboardPreview({ onBack, onSplitComplete }: StoryboardPreview
       }
 
       // Convert split results to SplitScene format
-      // Note: setSplitScenes will initialize missing fields with defaults
-      const splitScenes = splitResults.map((result: SplitResult, index: number) => ({
-        id: index + 1,
-        sceneName: '',
-        sceneLocation: '',
-        imageDataUrl: result.dataUrl,
-        imageHttpUrl: null,
-        width: result.width,
-        height: result.height,
-        imagePrompt: '',
-        imagePromptZh: '',
-        videoPrompt: '', // 英文提示词，等待 AI 生成
-        videoPromptZh: `场景 ${index + 1}`, // 中文提示词默认值
-        needsEndFrame: false,
-        endFramePrompt: '',
-        endFramePromptZh: '',
-        endFrameHttpUrl: null,
-        endFrameStatus: 'idle' as const,
-        endFrameProgress: 0,
-        endFrameError: null,
-        row: result.row,
-        col: result.col,
-        sourceRect: result.sourceRect,
-        endFrameImageUrl: null,
-        endFrameSource: null,
-        characterIds: [],
-        emotionTags: [],
-        shotSize: null,
-        duration: 5, // 默认 5 秒，支持 4-12 秒
-        ambientSound: '',
-        soundEffects: [],
-        soundEffectText: '',
-        dialogue: '',
-        actionSummary: '',
-        cameraMovement: '',
-        imageStatus: 'completed' as const,
-        imageProgress: 100,
-        imageError: null,
-        videoStatus: 'idle' as const,
-        videoProgress: 0,
-        videoUrl: null,
-        videoError: null,
-        videoMediaId: null,
+      // Persist each split image to local-image:// so they survive store serialization
+      // (base64 data URLs get stripped by partialize to avoid huge JSON files)
+      const splitScenes = await Promise.all(splitResults.map(async (result: SplitResult, index: number) => {
+        const sceneId = index + 1;
+        const persistResult = await persistSceneImage(result.dataUrl, sceneId, 'first', 'shots');
+        return {
+          id: sceneId,
+          sceneName: '',
+          sceneLocation: '',
+          imageDataUrl: persistResult.localPath,
+          imageHttpUrl: persistResult.httpUrl,
+          width: result.width,
+          height: result.height,
+          imagePrompt: '',
+          imagePromptZh: '',
+          videoPrompt: '', // 英文提示词，等待 AI 生成
+          videoPromptZh: `场景 ${index + 1}`, // 中文提示词默认值
+          needsEndFrame: false,
+          endFramePrompt: '',
+          endFramePromptZh: '',
+          endFrameHttpUrl: null,
+          endFrameStatus: 'idle' as const,
+          endFrameProgress: 0,
+          endFrameError: null,
+          row: result.row,
+          col: result.col,
+          sourceRect: result.sourceRect,
+          endFrameImageUrl: null,
+          endFrameSource: null,
+          characterIds: [],
+          emotionTags: [],
+          shotSize: null,
+          duration: 5, // 默认 5 秒，支持 4-12 秒
+          ambientSound: '',
+          soundEffects: [],
+          soundEffectText: '',
+          dialogue: '',
+          actionSummary: '',
+          cameraMovement: '',
+          imageStatus: 'completed' as const,
+          imageProgress: 100,
+          imageError: null,
+          videoStatus: 'idle' as const,
+          videoProgress: 0,
+          videoUrl: null,
+          videoError: null,
+          videoMediaId: null,
+        };
       }));
 
       setSplitScenes(splitScenes);

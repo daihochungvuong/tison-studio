@@ -1292,17 +1292,33 @@ function buildCharacterSheetPrompt(
     ? `professional character reference for "${name}", ${characterDescription}, real person`
     : `professional character design sheet for "${name}", ${characterDescription}`;
   
-  // 使用 SHEET_ELEMENTS 定义的 prompt，不再硬编码
+  // 使用 SHEET_ELEMENTS 定义的 prompt，如果是真人风格则转换成写实/摄影表述
   const contentParts = selectedElements
-    .map(id => SHEET_ELEMENTS.find(e => e.id === id)?.prompt)
+    .map(id => {
+      const element = SHEET_ELEMENTS.find(e => e.id === id);
+      if (!element) return null;
+      if (isRealistic) {
+        switch (id) {
+          case 'three-view': return 'multiple photographic angles: front portrait, side profile, full body shot';
+          case 'expressions': return 'collage of different facial expressions: smiling, frowning, angry, surprised';
+          case 'proportions': return 'full body photography, standing straight';
+          case 'poses': return 'various action poses, action photography collage';
+          default: return element.prompt;
+        }
+      }
+      return element.prompt;
+    })
     .filter(Boolean);
   
   const contentPrompt = contentParts.join(', ');
   
+  // 统一强化纯白背景，避免背景颜色被风格词带偏
+  const whiteBackgroundPrompt = "pure solid white background, isolated character on white background, absolutely no background scenery";
+  
   if (isRealistic) {
-    return `${basePrompt}, ${contentPrompt}, character reference sheet layout, white background, ${styleTokens}, photorealistic`;
+    return `${basePrompt}, ${contentPrompt}, photographic character reference layout, collage format, ${whiteBackgroundPrompt}, ${styleTokens}, cinematic lighting, highly detailed skin texture, photorealistic`;
   } else {
-    return `${basePrompt}, ${contentPrompt}, character reference sheet layout, white background, ${styleTokens}, detailed illustration`;
+    return `${basePrompt}, ${contentPrompt}, character reference sheet layout, ${whiteBackgroundPrompt}, ${styleTokens}, detailed illustration`;
   }
 }
 

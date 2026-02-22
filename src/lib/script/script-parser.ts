@@ -12,6 +12,7 @@ import { retryOperation } from "@/lib/utils/retry";
 import { cleanJsonString, safeParseJson, normalizeIds } from "@/lib/utils/json-cleaner";
 import { delay, RATE_LIMITS } from "@/lib/utils/rate-limiter";
 import { ApiKeyManager } from "@/lib/api-key-manager";
+import { getModelLimits, parseModelLimitsFromError, cacheDiscoveredLimits, estimateTokens } from "@/lib/ai/model-registry";
 
 /**
  * Normalize time value to match scene-store TIME_PRESETS
@@ -242,6 +243,45 @@ export async function callChatAPI(
     ? `${normalizedBaseUrl}/chat/completions`
     : `${normalizedBaseUrl}/v1/chat/completions`;
   
+  // 从 Model Registry 查询模型限制（三层查找：缓存→静态→default）
+  const modelLimits = getModelLimits(model);
+  const requestedMaxTokens = options.maxTokens ?? 4096;
+  const effectiveMaxTokens = Math.min(requestedMaxTokens, modelLimits.maxOutput);
+  if (effectiveMaxTokens < requestedMaxTokens) {
+    console.log(`[callChatAPI] max_tokens 自动 clamp: ${requestedMaxTokens} -> ${effectiveMaxTokens} (${model} maxOutput=${modelLimits.maxOutput})`);
+  }
+  
+  // === Token Budget Calculator ===
+  const inputTokens = estimateTokens(systemPrompt + userPrompt);
+  const safetyMargin = Math.ceil(modelLimits.contextWindow * 0.1);
+  const availableForOutput = modelLimits.contextWindow - inputTokens - safetyMargin;
+  const utilization = Math.round((inputTokens / modelLimits.contextWindow) * 100);
+  
+  console.log(
+    `[Dispatch] ${model}: input≈${inputTokens} / ctx=${modelLimits.contextWindow}, ` +
+    `output=${effectiveMaxTokens} (余量${100 - utilization}%)`
+  );
+  
+  // 输入已超过 context window 的 90% → 抛出错误（不发请求，省钱）
+  if (inputTokens > modelLimits.contextWindow * 0.9) {
+    const err = new Error(
+      `[TokenBudget] 输入 token (≈${inputTokens}) 超出 ${model} 的 context window ` +
+      `(${modelLimits.contextWindow}) 的 90%，请缩减输入或使用更大上下文的模型`
+    );
+    (err as any).code = 'TOKEN_BUDGET_EXCEEDED';
+    (err as any).inputTokens = inputTokens;
+    (err as any).contextWindow = modelLimits.contextWindow;
+    throw err;
+  }
+  
+  // 输出空间不到请求的 50% → 打印 warning
+  if (availableForOutput < requestedMaxTokens * 0.5) {
+    console.warn(
+      `[Dispatch] ⚠️ ${model}: 输出空间紧张！可用≈${availableForOutput} tokens，` +
+      `请求=${requestedMaxTokens}，可能导致输出被截断`
+    );
+  }
+  
   console.log('[callChatAPI] 请求 URL:', url);
 
   // Use retryOperation with key rotation on rate limit
@@ -270,7 +310,7 @@ export async function callChatAPI(
         { role: 'user', content: userPrompt },
       ],
       temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
+      max_tokens: effectiveMaxTokens,
     };
 
     // 智谱推理模型 (GLM-4.7/4.5 等) 支持通过 thinking.type 关闭深度思考
@@ -291,6 +331,39 @@ export async function callChatAPI(
       // Handle rate limit or auth error with key rotation
       if (keyManager.handleError(response.status)) {
         console.log(`[callChatAPI] Rotated to next API key due to error ${response.status}, available: ${keyManager.getAvailableKeyCount()}/${totalKeys}`);
+      }
+      
+      // === Error-driven Discovery: 400 错误自动发现模型限制并重试 ===
+      if (response.status === 400) {
+        const discovered = parseModelLimitsFromError(errorText);
+        if (discovered) {
+          cacheDiscoveredLimits(model, discovered);
+          
+          // 如果发现了 maxOutput 限制且当前请求超出，立即用正确值重试
+          if (discovered.maxOutput && effectiveMaxTokens > discovered.maxOutput) {
+            const correctedMaxTokens = Math.min(requestedMaxTokens, discovered.maxOutput);
+            console.warn(
+              `[callChatAPI] 🧠 发现 ${model} maxOutput=${discovered.maxOutput}，` +
+              `以 max_tokens=${correctedMaxTokens} 自动重试...`
+            );
+            const retryBody = { ...body, max_tokens: correctedMaxTokens };
+            const retryResp = await fetch(url, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(retryBody),
+            });
+            if (retryResp.ok) {
+              const retryData = await retryResp.json();
+              const retryContent = retryData.choices?.[0]?.message?.content;
+              if (retryContent) {
+                if (totalKeys > 1) keyManager.rotateKey();
+                return retryContent;
+              }
+            } else {
+              console.warn('[callChatAPI] 发现重试仍失败:', retryResp.status);
+            }
+          }
+        }
       }
       
       const error = new Error(`API request failed: ${response.status} - ${errorText}`);
@@ -337,7 +410,7 @@ export async function callChatAPI(
         const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens || 0;
         const completionTokens = usage?.completion_tokens || 0;
         const currentMaxTokens = body.max_tokens;
-        const newMaxTokens = Math.min(currentMaxTokens * 2, 65536);
+        const newMaxTokens = Math.min(currentMaxTokens * 2, modelLimits.maxOutput);
         
         if (reasoningTokens > 0 && completionTokens > 0 &&
             reasoningTokens / completionTokens > 0.8 &&

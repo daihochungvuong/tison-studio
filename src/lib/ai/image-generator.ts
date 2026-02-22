@@ -46,6 +46,27 @@ const ASPECT_RATIO_DIMS: Record<string, { width: number; height: number }> = {
 };
 
 /**
+ * Resolution + aspect ratio → target pixel dimensions for chat completions models
+ * Chat completions models (e.g. Gemini) don't have native resolution params,
+ * so we embed size instructions in the prompt text.
+ */
+const RESOLUTION_MULTIPLIERS: Record<string, number> = {
+  '1K': 1,
+  '2K': 2,
+  '4K': 4,
+};
+
+function getTargetDimensions(aspectRatio: string, resolution?: string): { width: number; height: number } | undefined {
+  const baseDims = ASPECT_RATIO_DIMS[aspectRatio];
+  if (!baseDims) return undefined;
+  const multiplier = RESOLUTION_MULTIPLIERS[resolution || '2K'] || 2;
+  return {
+    width: baseDims.width * multiplier,
+    height: baseDims.height * multiplier,
+  };
+}
+
+/**
  * 判断模型是否需要像素尺寸格式 (如 "1024x1024") 而非比例格式 (如 "1:1")
  * doubao-seedream, cogview 等国产模型需要像素尺寸
  */
@@ -112,7 +133,13 @@ async function generateImage(
       baseUrl,
       aspectRatio,
       params.referenceImages,
+      resolution,
     );
+  }
+
+  // Kling image 原生端点: /kling/v1/images/generations 或 /kling/v1/images/omni-image
+  if (apiFormat === 'kling_image') {
+    return submitViaKlingImages(params, model, apiKey, baseUrl, aspectRatio);
   }
 
   // 标准格式: /v1/images/generations (GPT Image, DALL-E, Flux, doubao-seedream 等)
@@ -149,12 +176,19 @@ async function submitViaChatCompletions(
   baseUrl: string,
   aspectRatio: string,
   referenceImages?: string[],
+  resolution?: string,
 ): Promise<ImageGenerationResult> {
   const endpoint = buildEndpoint(baseUrl, 'chat/completions');
 
+  // Build size instruction based on resolution setting
+  const targetDims = getTargetDimensions(aspectRatio, resolution);
+  const sizeInstruction = targetDims
+    ? ` Output the image at ${targetDims.width}x${targetDims.height} pixels resolution.`
+    : '';
+
   // Build messages
   const userContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
-    { type: 'text', text: `Generate an image with aspect ratio ${aspectRatio}: ${prompt}` },
+    { type: 'text', text: `Generate an image with aspect ratio ${aspectRatio}.${sizeInstruction} ${prompt}` },
   ];
   // Attach reference images if any
   if (referenceImages && referenceImages.length > 0) {
@@ -257,6 +291,7 @@ async function submitImageTask(
     prompt,
     n: 1,
     size: sizeValue,
+    stream: false,
   };
 
   if (referenceImages && referenceImages.length > 0) {
@@ -310,7 +345,17 @@ async function submitImageTask(
         throw error;
       }
 
-      return response.json();
+      const text = await response.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        // Fallback: some providers return SSE format "data: {...}" even with stream:false
+        const sseMatch = text.match(/^data:\s*(\{.+\})/m);
+        if (sseMatch) {
+          return JSON.parse(sseMatch[1]);
+        }
+        throw new Error(`无法解析图片 API 响应: ${text.substring(0, 100)}`);
+      }
     }, {
       maxRetries: 3,
       baseDelay: 3000,
@@ -378,7 +423,7 @@ async function pollTaskStatus(
     onProgress?.(progress);
 
     try {
-      const url = new URL(buildEndpoint(baseUrl, `tasks/${taskId}`));
+      const url = new URL(buildEndpoint(baseUrl, `images/generations/${taskId}`));
       url.searchParams.set('_ts', Date.now().toString());
 
       const response = await fetch(url.toString(), {
@@ -462,8 +507,14 @@ export async function submitGridImageRequest(params: {
 
   if (apiFormat === 'openai_chat') {
     // Gemini 等模型通过 chat completions 生图
-    const result = await submitViaChatCompletions(prompt, model, apiKey, normalizedBase, aspectRatio, referenceImages);
+    const result = await submitViaChatCompletions(prompt, model, apiKey, normalizedBase, aspectRatio, referenceImages, resolution);
     return { imageUrl: result.imageUrl };
+  }
+
+  if (apiFormat === 'kling_image') {
+    // Kling image 原生端点
+    const result = await submitViaKlingImages({ prompt, aspectRatio, negativePrompt: undefined }, model, apiKey, normalizedBase, aspectRatio);
+    return { imageUrl: result.imageUrl, taskId: result.taskId };
   }
 
   // 标准 images/generations 端点
@@ -535,6 +586,74 @@ export async function submitGridImageRequest(params: {
     || data.id?.toString();
 
   return { imageUrl, taskId };
+}
+
+/**
+ * Kling image 原生端点生成
+ * 提交到 /kling/v1/images/generations 或 /kling/v1/images/omni-image
+ * 轮询到 /kling/v1/images/{path}/{task_id}
+ */
+async function submitViaKlingImages(
+  params: { prompt: string; aspectRatio?: string; negativePrompt?: string },
+  model: string,
+  apiKey: string,
+  baseUrl: string,
+  aspectRatio: string,
+): Promise<ImageGenerationResult> {
+  const rootBase = baseUrl.replace(/\/v\d+$/, '');
+  const nativePath = model === 'kling-omni-image'
+    ? 'kling/v1/images/omni-image'
+    : 'kling/v1/images/generations';
+
+  const body: Record<string, any> = { prompt: params.prompt, model };
+  if (aspectRatio) body.aspect_ratio = aspectRatio;
+  if (params.negativePrompt) body.negative_prompt = params.negativePrompt;
+
+  console.log('[ImageGenerator] Kling image →', nativePath, { model });
+
+  const response = await fetch(`${rootBase}/${nativePath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Kling image API 错误: ${response.status} ${errText}`);
+  }
+
+  const data = await response.json();
+
+  // 直接返回图片
+  const directUrl = data.data?.[0]?.url;
+  if (directUrl) return { imageUrl: directUrl };
+
+  // 异步任务：轮询
+  const taskId = data.data?.task_id;
+  if (!taskId) throw new Error('Kling image 返回空任务 ID');
+
+  const pollUrl = `${rootBase}/${nativePath}/${taskId}`;
+  const pollInterval = 2000;
+  const maxAttempts = 60;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, pollInterval));
+    const pollResp = await fetch(pollUrl, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+    if (!pollResp.ok) continue;
+    const pollData = await pollResp.json();
+    const status = String(pollData.data?.task_status || '').toLowerCase();
+    if (status === 'succeed' || status === 'success' || status === 'completed') {
+      const imageUrl = pollData.data?.task_result?.images?.[0]?.url;
+      if (!imageUrl) throw new Error('Kling image 成功但无图片 URL');
+      return { imageUrl, taskId: String(taskId) };
+    }
+    if (status === 'failed' || status === 'error') {
+      throw new Error(pollData.data?.task_status_msg || 'Kling image 生成失败');
+    }
+  }
+  throw new Error('Kling image 生成超时');
 }
 
 /**

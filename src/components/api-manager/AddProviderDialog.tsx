@@ -14,6 +14,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -162,19 +163,21 @@ export function AddProviderDialog({
     });
 
     onOpenChange(false);
-    toast.success(`已添加 ${name}`);
+    toast.success(isMemefastAppend ? `已追加 Key 到 ${name}` : `已添加 ${name}`);
   };
 
-  // Filter out already existing platforms (except custom which can have multiple)
+  // Filter out already existing platforms (except custom and memefast which allow repeat add)
   const availablePlatforms = PLATFORM_PRESETS.filter(
-    (p) => p.platform === "custom" || !existingPlatforms.includes(p.platform)
+    (p) => p.platform === "custom" || p.platform === "memefast" || !existingPlatforms.includes(p.platform)
   );
+  const isMemefastAppend = platform === "memefast" && existingPlatforms.includes("memefast");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>添加 API 供应商</DialogTitle>
+          <DialogDescription className="hidden">添加一个新的 API 供应商</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-4">
@@ -254,7 +257,7 @@ export function AddProviderDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button onClick={handleSubmit}>添加</Button>
+          <Button onClick={handleSubmit}>{isMemefastAppend ? "追加 Key" : "添加"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

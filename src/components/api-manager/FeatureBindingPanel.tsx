@@ -27,25 +27,23 @@ import {
   ChevronUp,
   ChevronDown,
   Search,
+  Sparkles,
+  Clapperboard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 import { extractBrandFromModel, getBrandInfo } from "@/lib/brand-mapping";
 import { getBrandIcon } from "./brand-icons";
+import { getModelDisplayName } from "@/lib/freedom/model-display-names";
 
 /**
  * 供应商选项 - 每个功能可选的平台 + 模型
  */
 interface ProviderOption {
+  providerId: string;
   platform: string;
   name: string;
   model: string;
-}
-
-interface ProviderGroup {
-  platform: string;
-  name: string;
-  options: ProviderOption[];
 }
 
 interface FeatureMeta {
@@ -89,19 +87,35 @@ const FEATURE_CONFIGS: FeatureMeta[] = [
     icon: <ScanEye className="h-4 w-4" />,
     requiredCapability: "vision",
   },
+  {
+    key: "freedom_image",
+    name: "自由板块-图片",
+    description: "自由板块独立的图片生成配置（未配置时回退到「图片生成」）",
+    icon: <Sparkles className="h-4 w-4" />,
+    requiredCapability: "image_generation",
+    recommendation: "🎨 可独立配置自由板块使用的图片生成模型，不影响其他板块",
+  },
+  {
+    key: "freedom_video",
+    name: "自由板块-视频",
+    description: "自由板块独立的视频生成配置（未配置时回退到「视频生成」）",
+    icon: <Clapperboard className="h-4 w-4" />,
+    requiredCapability: "video_generation",
+    recommendation: "🎬 可独立配置自由板块使用的视频生成模型，不影响其他板块",
+  },
 ];
 
 function getOptionKey(option: ProviderOption): string {
-  return `${option.platform}:${option.model}`;
+  return `${option.providerId}:${option.model}`;
 }
 
-function parseOptionKey(key: string): { platform: string; model: string } | null {
+function parseOptionKey(key: string): { providerIdOrPlatform: string; model: string } | null {
   const idx = key.indexOf(":");
   if (idx <= 0) return null;
-  const platform = key.slice(0, idx);
+  const providerIdOrPlatform = key.slice(0, idx);
   const model = key.slice(idx + 1);
-  if (!platform || !model) return null;
-  return { platform, model };
+  if (!providerIdOrPlatform || !model) return null;
+  return { providerIdOrPlatform, model };
 }
 
 const DEFAULT_PLATFORM_CAPABILITIES: Record<string, ModelCapability[]> = {
@@ -226,9 +240,9 @@ function modelSupportsCapability(
 export function FeatureBindingPanel() {
   const {
     providers,
-    featureBindings,
     modelTypes,
     modelTags,
+    setFeatureBindings,
     toggleFeatureBinding,
     getFeatureBindings,
   } = useAPIConfigStore();
@@ -236,18 +250,20 @@ export function FeatureBindingPanel() {
   // 跟踪展开/折叠状态
   const [expandedFeatures, setExpandedFeatures] = useState<Set<AIFeature>>(new Set());
 
-  const configuredPlatforms = useMemo(() => {
+  const configuredProviderIds = useMemo(() => {
     const set = new Set<string>();
     for (const p of providers) {
       if (parseApiKeys(p.apiKey).length > 0) {
+        set.add(p.id);
+        // 也把 platform 加进去，以兼容旧数据检查
         set.add(p.platform);
       }
     }
     return set;
   }, [providers]);
 
-  const isProviderConfigured = (platform: string): boolean => {
-    return configuredPlatforms.has(platform);
+  const isProviderConfigured = (providerIdOrPlatform: string): boolean => {
+    return configuredProviderIds.has(providerIdOrPlatform);
   };
 
   const optionsByFeature = useMemo(() => {
@@ -267,6 +283,7 @@ export function FeatureBindingPanel() {
           const mTags = modelTags[model];
           if (!modelSupportsCapability(model, provider, feature.requiredCapability, mType, mTags)) continue;
           opts.push({
+            providerId: provider.id,
             platform: provider.platform,
             name: provider.name,
             model,
@@ -276,8 +293,8 @@ export function FeatureBindingPanel() {
 
       // Prefer configured providers first for better UX.
       opts.sort((a, b) => {
-        const aConfigured = configuredPlatforms.has(a.platform);
-        const bConfigured = configuredPlatforms.has(b.platform);
+        const aConfigured = isProviderConfigured(a.providerId);
+        const bConfigured = isProviderConfigured(b.providerId);
         if (aConfigured !== bConfigured) return aConfigured ? -1 : 1;
         if (a.name !== b.name) return a.name.localeCompare(b.name);
         return a.model.localeCompare(b.model);
@@ -287,7 +304,7 @@ export function FeatureBindingPanel() {
     }
 
     return map;
-  }, [providers, configuredPlatforms]);
+  }, [providers, configuredProviderIds, modelTypes, modelTags]);
 
   // 计算已配置的功能数（至少有一个有效绑定）
   const configuredCount = useMemo(() => {
@@ -300,12 +317,11 @@ export function FeatureBindingPanel() {
       return bindings.some(binding => {
         const parsed = parseOptionKey(binding);
         if (!parsed) return false;
-        const bindingKey = `${parsed.platform}:${parsed.model}`;
-        const existsInOptions = options.some((o) => getOptionKey(o) === bindingKey);
-        return existsInOptions && configuredPlatforms.has(parsed.platform);
+        const existsInOptions = options.some((o) => getOptionKey(o) === binding || (`${o.platform}:${o.model}` === binding));
+        return existsInOptions && isProviderConfigured(parsed.providerIdOrPlatform);
       });
     }).length;
-  }, [featureBindings, optionsByFeature, configuredPlatforms, getFeatureBindings]);
+  }, [optionsByFeature, configuredProviderIds, getFeatureBindings]);
 
   // 切换单个模型的选中状态
   const handleToggleBinding = (feature: FeatureMeta, optionKey: string) => {
@@ -375,15 +391,41 @@ export function FeatureBindingPanel() {
           const options = optionsByFeature[feature.key] || [];
           const currentBindings = getFeatureBindings(feature.key);
           const isExpanded = expandedFeatures.has(feature.key);
+          const selectableOptionKeys = options
+            .filter((o) => isProviderConfigured(o.providerId))
+            .map((o) => getOptionKey(o));
+          const selectedSelectableCount = selectableOptionKeys.filter((k) => currentBindings.includes(k) || currentBindings.includes(`${options.find(o => getOptionKey(o) === k)?.platform}:${options.find(o => getOptionKey(o) === k)?.model}`)).length;
+          const isAllSelected =
+            selectableOptionKeys.length > 0 && selectedSelectableCount === selectableOptionKeys.length;
+          const isPartiallySelected = selectedSelectableCount > 0 && !isAllSelected;
+          const isFreedomFeature = feature.key === 'freedom_image' || feature.key === 'freedom_video';
+          const handleToggleSelectAll = (checked: boolean | 'indeterminate') => {
+            if (checked === true) {
+              setFeatureBindings(
+                feature.key,
+                selectableOptionKeys.length > 0 ? selectableOptionKeys : null
+              );
+              return;
+            }
+            setFeatureBindings(feature.key, null);
+          };
           
-          // 检查是否至少有一个有效的绑定
-          const validBindings = currentBindings.filter(binding => {
+          // 检查有效/失效绑定（失效=模型被过滤、下线，或平台未配置）
+          const validBindings: string[] = [];
+          const invalidBindings: string[] = [];
+          for (const binding of currentBindings) {
             const parsed = parseOptionKey(binding);
-            if (!parsed) return false;
-            const bindingKey = `${parsed.platform}:${parsed.model}`;
-            const existsInOptions = options.some((o) => getOptionKey(o) === bindingKey);
-            return existsInOptions && isProviderConfigured(parsed.platform);
-          });
+            if (!parsed) {
+              invalidBindings.push(binding);
+              continue;
+            }
+            const existsInOptions = options.some((o) => getOptionKey(o) === binding || (`${o.platform}:${o.model}` === binding));
+            if (existsInOptions && isProviderConfigured(parsed.providerIdOrPlatform)) {
+              validBindings.push(binding);
+            } else {
+              invalidBindings.push(binding);
+            }
+          }
           const configured = validBindings.length > 0;
 
           return (
@@ -428,6 +470,16 @@ export function FeatureBindingPanel() {
                           {validBindings.length} 个模型
                         </span>
                       )}
+                      {isFreedomFeature && (
+                        <span className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
+                          可用 {selectableOptionKeys.length}
+                        </span>
+                      )}
+                      {isFreedomFeature && invalidBindings.length > 0 && (
+                        <span className="text-xs bg-amber-500/15 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded">
+                          暂不可用 {invalidBindings.length}
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground truncate">
                       {feature.description}
@@ -460,9 +512,31 @@ export function FeatureBindingPanel() {
 
                       {/* 推荐模型提示 */}
                       {feature.recommendation && (
-                        <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/30">
-                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400 leading-relaxed">
+                        <div className="flex items-start gap-2 px-3 py-2.5 rounded-md bg-red-500/10 border border-red-500/30">
+                          <span className="text-sm font-bold text-red-600 dark:text-red-400 leading-relaxed">
                             {feature.recommendation}
+                          </span>
+                        </div>
+                      )}
+                      {isFreedomFeature && invalidBindings.length > 0 && (
+                        <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                          检测到暂不可用绑定：系统不会自动清理，模型恢复后会自动继续可用。
+                        </p>
+                      )}
+
+                      {/* 自由板块一键全选（勾选=全选；取消=全部不选） */}
+                      {isFreedomFeature && (
+                        <div className="flex items-center justify-between rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+                          <label className="flex items-center gap-2 text-xs font-medium text-foreground">
+                            <Checkbox
+                              checked={isAllSelected ? true : isPartiallySelected ? 'indeterminate' : false}
+                              onCheckedChange={handleToggleSelectAll}
+                              disabled={selectableOptionKeys.length === 0}
+                            />
+                            全选模型（取消即全部不选）
+                          </label>
+                          <span className="text-[11px] text-muted-foreground">
+                            {selectedSelectableCount}/{selectableOptionKeys.length}
                           </span>
                         </div>
                       )}
@@ -487,7 +561,7 @@ export function FeatureBindingPanel() {
 
                         // 过滤后的模型列表
                         const filteredOptions = options.filter(o => {
-                          if (query && !o.model.toLowerCase().includes(query)) return false;
+                          if (query && !o.model.toLowerCase().includes(query) && !getModelDisplayName(o.model).toLowerCase().includes(query)) return false;
                           if (activeBrand && extractBrandFromModel(o.model) !== activeBrand) return false;
                           return true;
                         });
@@ -555,8 +629,9 @@ export function FeatureBindingPanel() {
                               ) : (
                                 filteredOptions.map((option) => {
                                   const optionKey = getOptionKey(option);
-                                  const optionConfigured = isProviderConfigured(option.platform);
-                                  const isSelected = currentBindings.includes(optionKey);
+                                  const optionConfigured = isProviderConfigured(option.providerId);
+                                  const legacyKey = `${option.platform}:${option.model}`;
+                                  const isSelected = currentBindings.includes(optionKey) || currentBindings.includes(legacyKey);
                                   const brandId = extractBrandFromModel(option.model);
 
                                   return (
@@ -577,7 +652,7 @@ export function FeatureBindingPanel() {
                                       />
                                       <span className="shrink-0">{getBrandIcon(brandId, 14)}</span>
                                       <span className="text-xs font-mono text-foreground">
-                                        {option.model}
+                                        {getModelDisplayName(option.model)}
                                       </span>
                                       <span className="text-[10px] text-muted-foreground ml-auto">
                                         {option.name}

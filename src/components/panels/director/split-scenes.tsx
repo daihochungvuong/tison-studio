@@ -155,17 +155,19 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   const trailerConfig = projectData?.trailerConfig || null;
   const trailerShotIds = trailerConfig?.shotIds || [];
   
-  // Debug: log raw data on every render
-  console.log('[SplitScenes] Raw data:', {
-    storyboardStatus,
-    splitScenesLength: splitScenes.length,
-    splitScenesIds: splitScenes.map(s => s.id),
-    trailerConfigStatus: trailerConfig?.status,
-    trailerShotIds,
-    styleTokens: storyboardConfig.styleTokens,
-    aspectRatio: storyboardConfig.aspectRatio,
-    sceneCount: storyboardConfig.sceneCount,
-  });
+  // Debug: log raw data on every render (dev only)
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[SplitScenes] Raw data:', {
+      storyboardStatus,
+      splitScenesLength: splitScenes.length,
+      splitScenesIds: splitScenes.map(s => s.id),
+      trailerConfigStatus: trailerConfig?.status,
+      trailerShotIds,
+      styleTokens: storyboardConfig.styleTokens,
+      aspectRatio: storyboardConfig.aspectRatio,
+      sceneCount: storyboardConfig.sceneCount,
+    });
+  }
   
   // 筛选预告片分镜：通过 sceneName 包含 "预告片" 关键字来识别
   const trailerScenes = useMemo(() => {
@@ -339,7 +341,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   // Handle delete scene
   const handleDeleteScene = useCallback((sceneId: number) => {
     deleteSplitScene(sceneId);
-    toast.success(`分镜 ${sceneId} 已删除`);
+    toast.success(`分镜 ${sceneId + 1} 已删除`);
   }, [deleteSplitScene]);
 
   // Handle remove first frame image
@@ -1066,191 +1068,6 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     }
   }, [storyboardImage, splitScenes, storyboardConfig, getApiKey, updateSplitSceneImagePrompt, updateSplitSceneVideoPrompt, updateSplitSceneEndFramePrompt, updateSplitSceneNeedsEndFrame]);
 
-  // Handle generate videos - serial processing based on concurrency
-  const handleGenerateVideos = useCallback(async () => {
-    if (splitScenes.length === 0) {
-      toast.error("没有可生成的分镜");
-      return;
-    }
-
-    const featureConfig = getFeatureConfig('video_generation');
-    if (!featureConfig) {
-      toast.error(getFeatureNotConfiguredMessage('video_generation'));
-      return;
-    }
-    const apiKey = featureConfig.apiKey;
-    const provider = featureConfig.platform;
-
-    // Check if all scenes have prompts
-    const scenesWithoutPrompts = splitScenes.filter(s => !s.videoPrompt.trim());
-    if (scenesWithoutPrompts.length > 0) {
-      toast.warning(`还有 ${scenesWithoutPrompts.length} 个分镜没有提示词，将使用默认提示词`);
-    }
-
-    // Filter scenes that need generation (idle or failed)
-    const scenesToGenerate = splitScenes.filter(
-      s => s.videoStatus === 'idle' || s.videoStatus === 'failed'
-    );
-
-    if (scenesToGenerate.length === 0) {
-      toast.info("所有分镜已生成或正在生成中");
-      return;
-    }
-
-    setIsGenerating(true);
-    toast.info(`开始串行生成 ${scenesToGenerate.length} 个视频...每次处理 ${concurrency} 个`);
-
-    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-
-    // Process scenes sequentially (serial) or with limited concurrency
-    for (let i = 0; i < scenesToGenerate.length; i += concurrency) {
-      const batch = scenesToGenerate.slice(i, i + concurrency);
-      
-      await Promise.all(batch.map(async (scene) => {
-        setCurrentGeneratingId(scene.id);
-        
-        try {
-          // Update status to generating
-          updateSplitSceneVideo(scene.id, {
-            videoStatus: 'uploading',
-            videoProgress: 0,
-            videoError: null,
-          });
-
-          // Real API call - upload image first if needed
-          let imageUrl = scene.imageDataUrl;
-          if (scene.imageDataUrl.startsWith('data:')) {
-            const response = await fetch(scene.imageDataUrl);
-            const blob = await response.blob();
-            const formData = new FormData();
-            formData.append('file', blob, `scene-${scene.id}.png`);
-            
-            const uploadResponse = await fetch(`${baseUrl}/api/upload`, {
-              method: 'POST',
-              body: formData,
-            });
-
-            if (uploadResponse.ok) {
-              const uploadData = await uploadResponse.json();
-              imageUrl = uploadData.url || scene.imageDataUrl;
-            }
-          }
-
-          updateSplitSceneVideo(scene.id, {
-            videoStatus: 'generating',
-            videoProgress: 20,
-          });
-
-          // Submit video generation
-          // 使用统一 prompt-builder 构建prompt（与 handleGenerateSingleVideo 保持一致）
-          const cinProfile = projectData?.cinematographyProfileId
-            ? getCinematographyProfile(projectData.cinematographyProfileId)
-            : undefined;
-          const fullPrompt = buildVideoPrompt(scene, cinProfile, {
-            styleTokens: [getStylePrompt(currentStyleId)],
-            aspectRatio: storyboardConfig.aspectRatio,
-            mediaType: getMediaType(currentStyleId),
-          });
-          const videoDuration = Math.max(4, Math.min(12, scene.duration || 5));
-          
-          const submitResponse = await fetch(`${baseUrl}/api/ai/video`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              imageUrl,
-              prompt: fullPrompt || scene.videoPrompt || `分镜 ${scene.id + 1} 动态效果`,
-              aspectRatio: storyboardConfig.aspectRatio,
-              duration: videoDuration,
-              apiKey,
-              provider,
-            }),
-          });
-
-          if (!submitResponse.ok) {
-            const errorData = await submitResponse.json().catch(() => ({}));
-            throw new Error(errorData.error || `Video API failed: ${submitResponse.status}`);
-          }
-
-          const submitData = await submitResponse.json();
-
-          // If direct video URL returned
-          if (submitData.videoUrl && submitData.status === 'completed') {
-            updateSplitSceneVideo(scene.id, {
-              videoStatus: 'completed',
-              videoProgress: 100,
-              videoUrl: submitData.videoUrl,
-            });
-            toast.success(`分镜 ${scene.id + 1} 视频生成完成`);
-            return;
-          }
-
-          // Poll for completion
-          if (submitData.taskId) {
-            const pollInterval = 3000;
-            const maxAttempts = 120; // 6 minutes max
-            
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
-              const progress = Math.min(20 + Math.floor((attempt / maxAttempts) * 80), 99);
-              updateSplitSceneVideo(scene.id, { videoProgress: progress });
-
-              const statusResponse = await fetch(
-                `${baseUrl}/api/ai/task/${submitData.taskId}?apiKey=${encodeURIComponent(apiKey)}&provider=${provider}&type=video`
-              );
-
-              if (!statusResponse.ok) {
-                throw new Error(`Failed to check task status: ${statusResponse.status}`);
-              }
-
-              const statusData = await statusResponse.json();
-              const status = statusData.status?.toLowerCase();
-
-              if (status === 'completed' || status === 'success') {
-                const videoUrl = statusData.videoUrl || statusData.url || statusData.resultUrl;
-                if (!videoUrl) throw new Error('Task completed but no video URL');
-                
-                updateSplitSceneVideo(scene.id, {
-                  videoStatus: 'completed',
-                  videoProgress: 100,
-                  videoUrl,
-                });
-                toast.success(`分镜 ${scene.id + 1} 视频生成完成`);
-                return;
-              }
-
-              if (status === 'failed' || status === 'error') {
-                throw new Error(statusData.error || 'Video generation failed');
-              }
-
-              await new Promise(r => setTimeout(r, pollInterval));
-            }
-
-            throw new Error('视频生成超时');
-          }
-
-          throw new Error('Invalid API response');
-
-        } catch (error) {
-          const err = error as Error;
-          console.error(`[SplitScenes] Scene ${scene.id} video generation failed:`, err);
-          updateSplitSceneVideo(scene.id, {
-            videoStatus: 'failed',
-            videoProgress: 0,
-            videoError: err.message,
-          });
-          toast.error(`分镜 ${scene.id + 1} 生成失败: ${err.message}`);
-        }
-      }));
-    }
-
-    setIsGenerating(false);
-    setCurrentGeneratingId(null);
-    
-    const completedCount = splitScenes.filter(s => s.videoStatus === 'completed').length;
-    if (completedCount === splitScenes.length) {
-      toast.success("所有视频生成完成！");
-    }
-  }, [splitScenes, storyboardConfig, getApiKey, concurrency, updateSplitSceneVideo]);
-
 
   // Generate video for a single scene - directly calls API with key rotation
   const handleGenerateSingleVideo = useCallback(async (sceneId: number) => {
@@ -1259,21 +1076,25 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
 
     // Debug: Check API store state
     const apiStore = useAPIConfigStore.getState();
-    console.log('[SplitScenes] API Store state:', {
-      providers: apiStore.providers.length,
-      apiKeys: Object.keys(apiStore.apiKeys),
-      memefastKey: apiStore.apiKeys['memefast'] ? 'set' : 'not set',
-      getApiKey_memefast: apiStore.getApiKey('memefast') ? 'set' : 'not set',
-    });
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[SplitScenes] API Store state:', {
+        providers: apiStore.providers.length,
+        apiKeys: Object.keys(apiStore.apiKeys),
+        memefastKey: apiStore.apiKeys['memefast'] ? 'set' : 'not set',
+        getApiKey_memefast: apiStore.getApiKey('memefast') ? 'set' : 'not set',
+      });
+    }
 
     // Use feature router with key rotation support
     const featureConfig = getFeatureConfig('video_generation');
-    console.log('[SplitScenes] Feature config for video_generation:', featureConfig ? {
-      platform: featureConfig.platform,
-      model: featureConfig.models?.[0],
-      apiKey: featureConfig.apiKey ? `${featureConfig.apiKey.substring(0, 8)}...` : 'empty',
-      providerId: featureConfig.provider?.id,
-    } : 'null');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[SplitScenes] Feature config for video_generation:', featureConfig ? {
+        platform: featureConfig.platform,
+        model: featureConfig.models?.[0],
+        apiKey: featureConfig.apiKey ? `${featureConfig.apiKey.substring(0, 8)}...` : 'empty',
+        providerId: featureConfig.provider?.id,
+      } : 'null');
+    }
     
     if (!featureConfig) {
       toast.error(getFeatureNotConfiguredMessage('video_generation'));
@@ -1293,7 +1114,9 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       return;
     }
     
-    console.log('[SplitScenes] Using video config:', { platform, model, videoBaseUrl });
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[SplitScenes] Using video config:', { platform, model, videoBaseUrl });
+    }
     
     // Get rotating key from manager
     const keyManager = featureConfig.keyManager;
@@ -1303,7 +1126,9 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       return;
     }
     
-    console.log(`[SplitScenes] Using API key ${keyManager.getTotalKeyCount()} keys, current index available: ${keyManager.getAvailableKeyCount()}`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[SplitScenes] Using API key ${keyManager.getTotalKeyCount()} keys, current index available: ${keyManager.getAvailableKeyCount()}`);
+    }
 
     setIsGenerating(true);
     setCurrentGeneratingId(sceneId);
@@ -1553,12 +1378,6 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         (async () => {
           try {
             const { extractLastFrameFromVideo } = await import('./use-video-generation');
-            const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
-            
-            if (!isImageHostConfigured()) {
-              console.log('[SplitScenes] Image host not configured, skipping frame extraction');
-              return;
-            }
             
             const lastFrameBase64 = await extractLastFrameFromVideo(finalVideoUrl, 0.1);
             if (!lastFrameBase64) {
@@ -1566,17 +1385,10 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
               return;
             }
             
-            const uploadResult = await uploadToImageHost(lastFrameBase64, {
-              name: `scene_${sceneId + 1}_endframe_${Date.now()}`,
-              expiration: 15552000,
-            });
-            
-            if (uploadResult.success && uploadResult.url) {
-              updateSplitSceneEndFrame(sceneId, lastFrameBase64, 'video-extracted', uploadResult.url);
-              console.log('[SplitScenes] Saved video last frame:', uploadResult.url.substring(0, 60));
-            } else {
-              console.warn('[SplitScenes] Failed to upload last frame:', uploadResult.error);
-            }
+            // 持久化到本地文件系统（local-image://），避免 base64 被 partialize 清除
+            const persistResult = await persistSceneImage(lastFrameBase64, sceneId, 'end');
+            updateSplitSceneEndFrame(sceneId, persistResult.localPath, 'video-extracted', persistResult.httpUrl || undefined);
+            console.log('[SplitScenes] Saved video last frame locally:', persistResult.localPath);
           } catch (e) {
             console.warn('[SplitScenes] Error during frame extraction:', e);
           }
@@ -1618,6 +1430,68 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     setIsGenerating(false);
     setCurrentGeneratingId(null);
   }, [splitScenes, storyboardConfig, getApiKey, updateSplitSceneVideo, autoSaveVideoToLibrary, buildEmotionDescription, getCharacterReferenceImages]);
+
+  // Handle generate videos - serial processing based on concurrency
+  // 复用 handleGenerateSingleVideo 的统一 API 调用逻辑，避免使用不存在的 /api/ai/video 端点
+  const handleGenerateVideos = useCallback(async () => {
+    if (splitScenes.length === 0) {
+      toast.error("没有可生成的分镜");
+      return;
+    }
+
+    const featureConfig = getFeatureConfig('video_generation');
+    if (!featureConfig) {
+      toast.error(getFeatureNotConfiguredMessage('video_generation'));
+      return;
+    }
+
+    // Check if all scenes have prompts
+    const scenesWithoutPrompts = splitScenes.filter(s => !s.videoPrompt.trim());
+    if (scenesWithoutPrompts.length > 0) {
+      toast.warning(`还有 ${scenesWithoutPrompts.length} 个分镜没有提示词，将使用默认提示词`);
+    }
+
+    // Filter scenes that need generation (idle or failed)
+    const scenesToGenerate = splitScenes.filter(
+      s => s.videoStatus === 'idle' || s.videoStatus === 'failed'
+    );
+
+    if (scenesToGenerate.length === 0) {
+      toast.info("所有分镜已生成或正在生成中");
+      return;
+    }
+
+    setIsGenerating(true);
+    toast.info(`开始串行生成 ${scenesToGenerate.length} 个视频...每次处理 ${concurrency} 个`);
+
+    let successCount = 0;
+    const totalCount = scenesToGenerate.length;
+
+    // Process scenes sequentially (serial) or with limited concurrency
+    // 逐个调用 handleGenerateSingleVideo，复用其完整的 API 调用逻辑
+    for (let i = 0; i < scenesToGenerate.length; i += concurrency) {
+      const batch = scenesToGenerate.slice(i, i + concurrency);
+      
+      await Promise.all(batch.map(async (scene) => {
+        try {
+          await handleGenerateSingleVideo(scene.id);
+          successCount++;
+        } catch (error) {
+          // handleGenerateSingleVideo 内部已处理错误和 toast，这里仅做计数
+          console.error(`[SplitScenes] Batch: Scene ${scene.id} video generation failed:`, error);
+        }
+      }));
+    }
+
+    setIsGenerating(false);
+    setCurrentGeneratingId(null);
+    
+    if (successCount === totalCount) {
+      toast.success("所有视频生成完成！");
+    } else if (successCount > 0) {
+      toast.info(`${successCount}/${totalCount} 个视频生成完成，${totalCount - successCount} 个失败`);
+    }
+  }, [splitScenes, concurrency, handleGenerateSingleVideo]);
 
   // Generate image for a single scene using image API
   const handleGenerateSingleImage = useCallback(async (sceneId: number) => {
@@ -2349,33 +2223,27 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       const imageHostConfigured = isImageHostConfigured();
       
       // 回填：根据任务类型决定更新首帧还是尾帧
+      // 先持久化到本地文件系统（local-image://），避免 base64 被 partialize 清除导致导入后图片丢失
       for (let i = 0; i < pageTasks.length; i++) {
         const task = pageTasks[i];
         const s = task.scene;
         const slicedImage = slicedImages[i];
         if (slicedImage) {
-          // 上传切割后的图片到图床
-          let httpUrl: string | undefined;
-          if (imageHostConfigured) {
-            try {
-              const uploadResult = await uploadToImageHost(slicedImage, {
-                name: `scene_${s.id + 1}_${task.type === 'end' ? 'end' : 'first'}_frame_${Date.now()}`,
-                expiration: 15552000, // 180 days
-              });
-              if (uploadResult.success && uploadResult.url) {
-                httpUrl = uploadResult.url;
-                console.log(`[MergedGen] 分镜 ${s.id + 1} ${task.type === 'end' ? '尾帧' : '首帧'} 已上传到图床:`, httpUrl.substring(0, 60));
-              }
-            } catch (e) {
-              console.warn(`[MergedGen] 分镜 ${s.id + 1} 图片上传图床失败:`, e);
-            }
+          // 持久化到本地 + 图床（与单图生成一致）
+          const frameType = task.type === 'end' ? 'end' as const : 'first' as const;
+          const persistResultLoop = await persistSceneImage(slicedImage, s.id, frameType);
+          const httpUrl = persistResultLoop.httpUrl || undefined;
+          const localPath = persistResultLoop.localPath;
+          
+          if (httpUrl) {
+            console.log(`[MergedGen] 分镜 ${s.id + 1} ${task.type === 'end' ? '尾帧' : '首帧'} 已上传到图床:`, httpUrl.substring(0, 60));
           }
           
           if (task.type === 'end') {
-            updateSplitSceneEndFrame(s.id, slicedImage, 'ai-generated');
+            updateSplitSceneEndFrame(s.id, localPath, 'ai-generated', httpUrl || undefined);
             // 自动保存尾帧到素材库
             addMediaFromUrl({
-              url: slicedImage,
+              url: localPath,
               name: `分镜 ${s.id + 1} - 尾帧`,
               type: 'image',
               source: 'ai-image',
@@ -2384,10 +2252,10 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
             });
           } else {
             // 传递 httpUrl，这样视频生成时可以直接使用，不用再上传
-            updateSplitSceneImage(s.id, slicedImage, s.width, s.height, httpUrl);
+            updateSplitSceneImage(s.id, localPath, s.width, s.height, httpUrl);
             // 自动保存首帧到素材库
             addMediaFromUrl({
-              url: slicedImage,
+              url: localPath,
               name: `分镜 ${s.id + 1} - 首帧`,
               type: 'image',
               source: 'ai-image',

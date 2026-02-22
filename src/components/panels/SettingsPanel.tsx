@@ -10,7 +10,7 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useAPIConfigStore, type IProvider, type ImageHostProvider } from "@/stores/api-config-store";
+import { useAPIConfigStore, type IProvider, type ImageHostProvider, type AIFeature } from "@/stores/api-config-store";
 import { useAppSettingsStore } from "@/stores/app-settings-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useCharacterLibraryStore } from "@/stores/character-library-store";
@@ -99,6 +99,8 @@ export function SettingsPanel() {
     resetAdvancedOptions,
     isImageHostConfigured,
     syncProviderModels,
+    setFeatureBindings,
+    getFeatureBindings,
   } = useAPIConfigStore();
   const {
     resourceSharing,
@@ -892,7 +894,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.0 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1038,7 +1040,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.0 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1140,11 +1142,40 @@ export function SettingsPanel() {
               {/* Info Notice */}
               <div className="flex items-start gap-3 p-4 bg-muted/50 border border-border rounded-lg">
                 <Info className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
-                <div>
+                <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">
                     图床用于存储视频生成过程中的临时图片，主要用于「视觉连续性」功能。
                     如果不配置图床，跨分镜的帧传递功能将受限。
                     启用多个图床会按顺序轮流使用，失败自动切换。
+                  </p>
+                  <p className="text-sm">
+                    👉 推荐使用免费图床{' '}
+                    <a
+                      href="https://imgbb.com/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:text-blue-600 underline font-medium"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        window.open('https://imgbb.com/', '_blank');
+                      }}
+                    >
+                      ImgBB（点击前往注册）
+                    </a>
+                    ，注册后在{' '}
+                    <a
+                      href="https://api.imgbb.com/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:text-blue-600 underline font-medium"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        window.open('https://api.imgbb.com/', '_blank');
+                      }}
+                    >
+                      API 页面
+                    </a>
+                    {' '}获取免费 API Key，然后点击上方「添加」按钮配置即可。
                   </p>
                 </div>
               </div>
@@ -1152,7 +1183,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.0 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1360,7 +1391,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.0 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1372,14 +1403,47 @@ export function SettingsPanel() {
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onSubmit={(providerData) => {
-          const provider = addProvider(providerData);
+          // 魔因API：已存在时合并 Key，不重复创建
+          const existingMemefast = providerData.platform === 'memefast'
+            ? providers.find((p) => p.platform === 'memefast')
+            : null;
+          let provider: IProvider;
+          if (existingMemefast) {
+            const oldKeys = parseApiKeys(existingMemefast.apiKey);
+            const newKeys = parseApiKeys(providerData.apiKey);
+            const merged = Array.from(new Set([...oldKeys, ...newKeys]));
+            updateProvider({ ...existingMemefast, apiKey: merged.join(',') });
+            provider = existingMemefast;
+          } else {
+            provider = addProvider(providerData);
+          }
+          // 如果添加的是 memefast 供应商，自动设置默认服务映射（仅在对应服务尚未配置时）
+          if (providerData.platform === 'memefast') {
+            // 使用 provider.id（而非 platform 字符串）避免多供应商时的歧义解析
+            const pid = provider.id;
+            const MEMEFAST_DEFAULT_BINDINGS: Record<string, string> = {
+              script_analysis: `${pid}:deepseek-v3`,
+              character_generation: `${pid}:gemini-3-pro-image-preview`,
+              video_generation: `${pid}:doubao-seedance-1-5-pro-251215`,
+              image_understanding: `${pid}:gemini-2.5-flash`,
+            };
+            for (const [feature, binding] of Object.entries(MEMEFAST_DEFAULT_BINDINGS)) {
+              const current = getFeatureBindings(feature as AIFeature);
+              if (!current || current.length === 0) {
+                setFeatureBindings(feature as AIFeature, [binding]);
+              }
+            }
+          }
           // 添加后自动同步模型列表和端点元数据
+          const finalProviderId = existingMemefast ? existingMemefast.id : provider.id;
           if (parseApiKeys(providerData.apiKey).length > 0) {
-            setSyncingProvider(provider.id);
-            syncProviderModels(provider.id).then(result => {
+            setSyncingProvider(finalProviderId);
+            syncProviderModels(finalProviderId).then(result => {
               setSyncingProvider(null);
               if (result.success) {
                 toast.success(`已自动同步 ${result.count} 个模型`);
+              } else if (result.error) {
+                toast.error(`模型同步失败: ${result.error}`);
               }
             });
           }
@@ -1400,6 +1464,8 @@ export function SettingsPanel() {
               setSyncingProvider(null);
               if (result.success) {
                 toast.success(`已自动同步 ${result.count} 个模型`);
+              } else if (result.error) {
+                toast.error(`模型同步失败: ${result.error}`);
               }
             });
           }
