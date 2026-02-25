@@ -187,14 +187,15 @@ moyin-creator/
 - 🐙 GitHub: [https://github.com/MemeCalculate/moyin-creator](https://github.com/MemeCalculate/moyin-creator)
 
 ### 联系我们
-<img src="https://github.com/user-attachments/assets/625d32ab-5426-49f0-a478-f6be62ba0dd2" width="200" alt="交流群" />
 
+<img src="https://github.com/user-attachments/assets/85a9cbf6-754d-4d4d-9b0e-6feab9e8eec3" width="200" alt="交流群" />
 <img src="docs/images/wechat-contact.png" width="200" alt="微信联系" />
 
 
 ---
 
 <p align="center">Made with ❤️ by <a href="https://github.com/MemeCalculate">MemeCalculate</a></p>
+
 
 
 
