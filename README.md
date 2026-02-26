@@ -1,7 +1,6 @@
 <p align="center">
   <img src="build/icon.png" width="120" alt="魔因漫创 Logo" />
 </p>
-<img src="https://github.com/user-attachments/assets/2f27bf9a-82c9-4d06-904c-1bbb507d8c81" width="120" alt="魔因漫创 Logo" />
 <h1 align="center">魔因漫创 Moyin Creator</h1>
 
 <p align="center">
@@ -196,6 +195,7 @@ moyin-creator/
 ---
 
 <p align="center">Made with ❤️ by <a href="https://github.com/MemeCalculate">MemeCalculate</a></p>
+
 
 
 
