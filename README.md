@@ -50,7 +50,7 @@
 
 ## 功能特性
 
-### ⭐ S级板块 — Seedance 2.0 多模态创作
+### ⭐ S级板块 — Seedance 2.0 多模态创作 SkyReels-V4 多模态创作
 - **多镜头合并叙事视频生成**：将多个分镜分组合并生成连贯叙事视频
 - 支持 @Image / @Video / @Audio 多模态引用（角色参考图、场景图、首帧图自动收集）
 - 智能提示词构建：自动三层融合（动作 + 镜头语言 + 对白唇形同步）
@@ -195,6 +195,7 @@ moyin-creator/
 ---
 
 <p align="center">Made with ❤️ by <a href="https://github.com/MemeCalculate">MemeCalculate</a></p>
+
 
 
 
