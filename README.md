@@ -187,7 +187,7 @@ moyin-creator/
 
 ### 联系我们
 
-<img src="https://github.com/user-attachments/assets/9445283b-fa2a-47f7-aca7-c819a0964abb" width="200" alt="交流群" />
+<img src="https://github.com/user-attachments/assets/245013d3-2515-43dd-8ccf-cac95f89df86" width="200" alt="交流群" />
 
 <img src="docs/images/wechat-contact.png" width="200" alt="微信联系" />
 
@@ -195,6 +195,7 @@ moyin-creator/
 ---
 
 <p align="center">Made with ❤️ by <a href="https://github.com/MemeCalculate">MemeCalculate</a></p>
+
 
 
 
