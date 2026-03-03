@@ -14,6 +14,7 @@
 import type {
   EpisodeRawScript,
   ProjectBackground,
+  PromptLanguage,
   ScriptData,
   Shot,
   SceneRawContent,
@@ -52,6 +53,7 @@ export interface GenerateShotsOptions {
   baseUrl?: string;
   styleId: string;
   targetDuration: string;
+  promptLanguage?: import('@/types/script').PromptLanguage;
 }
 
 export interface GenerateEpisodeShotsResult {
@@ -1012,6 +1014,7 @@ export interface ShotCalibrationOptions {
   model?: string;  // 可选指定模型
   styleId?: string;  // 风格标识，影响visualPrompt生成
   cinematographyProfileId?: string;  // 摄影风格档案 ID，影响拍摄控制字段默认值
+  promptLanguage?: import('@/types/script').PromptLanguage;
 }
 
 export interface ShotCalibrationResult {
@@ -1019,6 +1022,57 @@ export interface ShotCalibrationResult {
   calibratedCount: number;
   totalShots: number;
   error?: string;
+}
+
+/**
+ * 根据用户选择的提示词语言，清理/保留分镜提示词字段，避免语言切换后残留旧字段
+ */
+function applyPromptLanguageToShotPrompts(
+  existingShot: Shot,
+  calibration: Record<string, any>,
+  promptLanguage: PromptLanguage = 'zh+en',
+): Pick<Shot, 'visualPrompt' | 'imagePrompt' | 'imagePromptZh' | 'videoPrompt' | 'videoPromptZh' | 'endFramePrompt' | 'endFramePromptZh'> {
+  const nextVisualPrompt = calibration.visualPrompt || existingShot.visualPrompt;
+  const nextImagePrompt = calibration.imagePrompt || existingShot.imagePrompt;
+  const nextImagePromptZh = calibration.imagePromptZh || existingShot.imagePromptZh;
+  const nextVideoPrompt = calibration.videoPrompt || existingShot.videoPrompt;
+  const nextVideoPromptZh = calibration.videoPromptZh || existingShot.videoPromptZh;
+  const nextEndFramePrompt = calibration.endFramePrompt || existingShot.endFramePrompt;
+  const nextEndFramePromptZh = calibration.endFramePromptZh || existingShot.endFramePromptZh;
+
+  if (promptLanguage === 'zh') {
+    return {
+      visualPrompt: undefined,
+      imagePrompt: undefined,
+      imagePromptZh: nextImagePromptZh,
+      videoPrompt: undefined,
+      videoPromptZh: nextVideoPromptZh,
+      endFramePrompt: undefined,
+      endFramePromptZh: nextEndFramePromptZh,
+    };
+  }
+
+  if (promptLanguage === 'en') {
+    return {
+      visualPrompt: nextVisualPrompt,
+      imagePrompt: nextImagePrompt,
+      imagePromptZh: undefined,
+      videoPrompt: nextVideoPrompt,
+      videoPromptZh: undefined,
+      endFramePrompt: nextEndFramePrompt,
+      endFramePromptZh: undefined,
+    };
+  }
+
+  return {
+    visualPrompt: nextVisualPrompt,
+    imagePrompt: nextImagePrompt,
+    imagePromptZh: nextImagePromptZh,
+    videoPrompt: nextVideoPrompt,
+    videoPromptZh: nextVideoPromptZh,
+    endFramePrompt: nextEndFramePrompt,
+    endFramePromptZh: nextEndFramePromptZh,
+  };
 }
 
 /**
@@ -1167,7 +1221,7 @@ export async function calibrateEpisodeShots(
           try {
             calibrations = await calibrateShotsMultiStage(
               batchData,
-              { styleId: options.styleId, cinematographyProfileId: options.cinematographyProfileId },
+              { styleId: options.styleId, cinematographyProfileId: options.cinematographyProfileId, promptLanguage: options.promptLanguage },
               globalContext,
               (stage, total, name) => {
                 console.log(`[calibrateShots] 批次 ${batchNum}/${totalBatches} - Stage ${stage}/${total}: ${name}`);
@@ -1209,7 +1263,6 @@ export async function calibrateEpisodeShots(
               updatedShots[shotIndex] = {
                 ...updatedShots[shotIndex],
                 visualDescription: calibration.visualDescription || updatedShots[shotIndex].visualDescription,
-                visualPrompt: calibration.visualPrompt || updatedShots[shotIndex].visualPrompt,
                 shotSize: calibration.shotSize || updatedShots[shotIndex].shotSize,
                 cameraMovement: calibration.cameraMovement || updatedShots[shotIndex].cameraMovement,
                 duration: calibration.duration || updatedShots[shotIndex].duration,
@@ -1219,15 +1272,16 @@ export async function calibrateEpisodeShots(
                   : updatedShots[shotIndex].characterNames,
                 ambientSound: calibration.ambientSound || updatedShots[shotIndex].ambientSound,
                 soundEffect: calibration.soundEffect || updatedShots[shotIndex].soundEffect,
-                imagePrompt: calibration.imagePrompt || updatedShots[shotIndex].imagePrompt,
-                imagePromptZh: calibration.imagePromptZh || updatedShots[shotIndex].imagePromptZh,
-                videoPrompt: calibration.videoPrompt || updatedShots[shotIndex].videoPrompt,
-                videoPromptZh: calibration.videoPromptZh || updatedShots[shotIndex].videoPromptZh,
-                endFramePrompt: calibration.endFramePrompt || updatedShots[shotIndex].endFramePrompt,
-                endFramePromptZh: calibration.endFramePromptZh || updatedShots[shotIndex].endFramePromptZh,
+                ...applyPromptLanguageToShotPrompts(
+                  updatedShots[shotIndex],
+                  calibration,
+                  options.promptLanguage || 'zh+en',
+                ),
                 needsEndFrame: calibration.needsEndFrame ?? updatedShots[shotIndex].needsEndFrame,
                 narrativeFunction: calibration.narrativeFunction || updatedShots[shotIndex].narrativeFunction,
+                conflictStage: calibration.conflictStage || updatedShots[shotIndex].conflictStage,
                 shotPurpose: calibration.shotPurpose || updatedShots[shotIndex].shotPurpose,
+                storyAlignment: calibration.storyAlignment || updatedShots[shotIndex].storyAlignment,
                 visualFocus: calibration.visualFocus || updatedShots[shotIndex].visualFocus,
                 cameraPosition: calibration.cameraPosition || updatedShots[shotIndex].cameraPosition,
                 characterBlocking: calibration.characterBlocking || updatedShots[shotIndex].characterBlocking,
@@ -1386,7 +1440,6 @@ export async function calibrateSingleShot(
       return {
         ...s,
         visualDescription: calibration.visualDescription || s.visualDescription,
-        visualPrompt: calibration.visualPrompt || s.visualPrompt,
         shotSize: calibration.shotSize || s.shotSize,
         cameraMovement: calibration.cameraMovement || s.cameraMovement,
         duration: calibration.duration || s.duration,
@@ -1394,17 +1447,18 @@ export async function calibrateSingleShot(
         characterNames: calibration.characterNames?.length > 0 ? calibration.characterNames : s.characterNames,
         ambientSound: calibration.ambientSound || s.ambientSound,
         soundEffect: calibration.soundEffect || s.soundEffect,
-        // 三层提示词系统
-        imagePrompt: calibration.imagePrompt || s.imagePrompt,
-        imagePromptZh: calibration.imagePromptZh || s.imagePromptZh,
-        videoPrompt: calibration.videoPrompt || s.videoPrompt,
-        videoPromptZh: calibration.videoPromptZh || s.videoPromptZh,
-        endFramePrompt: calibration.endFramePrompt || s.endFramePrompt,
-        endFramePromptZh: calibration.endFramePromptZh || s.endFramePromptZh,
+        // 三层提示词系统（按 promptLanguage 清理旧字段）
+        ...applyPromptLanguageToShotPrompts(
+          s,
+          calibration,
+          options.promptLanguage || 'zh+en',
+        ),
         needsEndFrame: calibration.needsEndFrame ?? s.needsEndFrame,
         // 叙事驱动字段
         narrativeFunction: calibration.narrativeFunction || s.narrativeFunction,
+        conflictStage: calibration.conflictStage || s.conflictStage,
         shotPurpose: calibration.shotPurpose || s.shotPurpose,
+        storyAlignment: calibration.storyAlignment || s.storyAlignment,
         visualFocus: calibration.visualFocus || s.visualFocus,
         cameraPosition: calibration.cameraPosition || s.cameraPosition,
         characterBlocking: calibration.characterBlocking || s.characterBlocking,

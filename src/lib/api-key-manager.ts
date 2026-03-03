@@ -46,6 +46,7 @@ export const DEFAULT_PROVIDERS: Omit<IProvider, 'id' | 'apiKey'>[] = [
       'deepseek-v3.2',
       'glm-4.7',
       'gemini-3-pro-preview',
+      'gemini-3.1-pro-image-preview',
       'gemini-3-pro-image-preview',
       'gpt-image-1.5',
       'doubao-seedance-1-5-pro-251215',
@@ -127,7 +128,12 @@ export type ModelApiFormat =
 // MemeFast supported_endpoint_types 值 → 我们的图片 API 格式
 const IMAGE_ENDPOINT_MAP: Record<string, ModelApiFormat> = {
   'image-generation': 'openai_images',
-  'openai': 'openai_chat',  // 如 gpt-image-1-all 通过 chat completions 生图
+  'dall-e-3': 'openai_images',       // gpt-image-1, qwen-image-max 等
+  'openai': 'openai_chat',           // gpt-image-1-all 通过 chat completions 生图
+  'gemini': 'openai_chat',           // gemini-2.5-flash-image, gemini-3-pro-image-preview 等
+  'kling生图': 'kling_image',         // kling 原生图片生成
+  'omni-image': 'kling_image',       // kling-omni-image
+  '文生图': 'kling_image',            // kling 文生图
 };
 
 // MemeFast supported_endpoint_types 值 → 我们的视频 API 格式能力分类
@@ -145,10 +151,25 @@ const VIDEO_ENDPOINT_MAP: Record<string, ModelApiFormat> = {
   '海螺视频生成': 'openai_video',    // MiniMax-Hailuo
   'luma视频生成': 'openai_video',     // luma_video_api
   'luma视频扩展': 'openai_video',     // luma_video_extend
+  'luma视频延长': 'openai_video',     // luma 视频延长
   'runway图生视频': 'openai_video',   // runwayml
   'aigc-video': 'openai_video',       // aigc-video-hailuo/kling/vidu
   'minimax/video-01异步': 'openai_video', // minimax/video-01
   'openai-response': 'openai_video',  // veo3-pro 等
+  // wan 视频生成 (wan2.6-i2v, wan2.6-i2v-flash 等)
+  'wan视频生成': 'openai_video',
+  // Vidu 视频端点
+  'vidu文生视频': 'openai_video',
+  'vidu图生视频': 'openai_video',
+  'vidu参考生视频': 'openai_video',
+  'vidu首尾帧': 'openai_video',
+  // Kling 扩展端点
+  'omni-video': 'openai_video',       // kling omni-video
+  '动作控制': 'openai_video',         // kling 动作控制
+  '多模态视频编辑': 'openai_video',  // kling 多模态视频编辑
+  '数字人': 'openai_video',           // kling 数字人
+  '对口型': 'openai_video',           // kling 对口型
+  '视频特效': 'openai_video',         // kling 视频特效
 };
 
 /**
@@ -165,6 +186,10 @@ export function resolveImageApiFormat(endpointTypes: string[] | undefined, model
     // 其次尝试 chat completions （Gemini 多模态图片）
     for (const t of endpointTypes) {
       if (IMAGE_ENDPOINT_MAP[t] === 'openai_chat') return 'openai_chat';
+    }
+    // Kling 原生图片端点
+    for (const t of endpointTypes) {
+      if (IMAGE_ENDPOINT_MAP[t] === 'kling_image') return 'kling_image';
     }
     return 'unsupported';
   }

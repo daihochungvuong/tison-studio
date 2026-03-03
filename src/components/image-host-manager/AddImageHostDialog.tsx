@@ -85,19 +85,20 @@ export function AddImageHostDialog({
 
   useEffect(() => {
     if (open) {
-      setPlatform("imgbb");
-      setName("");
-      setBaseUrl("");
-      setUploadPath("");
+      const defaultPreset = IMAGE_HOST_PRESETS[0]; // imgbb
+      setPlatform(defaultPreset.platform as ImageHostPlatform);
+      setName(defaultPreset.name || "");
+      setBaseUrl(defaultPreset.baseUrl || "");
+      setUploadPath(defaultPreset.uploadPath || "");
       setApiKey("");
-      setEnabled(true);
-      setApiKeyParam("");
-      setApiKeyHeader("");
-      setExpirationParam("");
-      setImageField("");
-      setNameField("");
-      setResponseUrlField("");
-      setResponseDeleteUrlField("");
+      setEnabled(defaultPreset.enabled ?? true);
+      setApiKeyParam(defaultPreset.apiKeyParam || "");
+      setApiKeyHeader(defaultPreset.apiKeyHeader || "");
+      setExpirationParam(defaultPreset.expirationParam || "");
+      setImageField(defaultPreset.imageField || "");
+      setNameField(defaultPreset.nameField || "");
+      setResponseUrlField(defaultPreset.responseUrlField || "");
+      setResponseDeleteUrlField(defaultPreset.responseDeleteUrlField || "");
     }
   }, [open]);
 
@@ -153,12 +154,12 @@ export function AddImageHostDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>添加图床服务商</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 py-4">
+        <div className="flex flex-col gap-4 py-4 overflow-y-auto pr-1">
           <div className="space-y-2">
             <Label>平台</Label>
             <Select value={platform} onValueChange={(v) => setPlatform(v as ImageHostPlatform)}>

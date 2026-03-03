@@ -340,18 +340,18 @@ export function SplitSceneCard({
   );
 
   return (
-    <div className="group relative border rounded-lg overflow-hidden bg-card hover:border-primary/50 transition-colors">
+    <div className="group relative w-full min-w-0 border rounded-lg overflow-hidden bg-card hover:border-primary/50 transition-colors">
       {/* 分镜编号和控制栏 */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-muted/30 border-b">
-        <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center justify-between px-3 py-1.5 bg-muted/30 border-b">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="text-sm font-bold text-muted-foreground">分镜 #{scene.id + 1}</span>
           {(scene.sceneName || scene.sceneLocation) && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary cursor-default">
-                    <MapPin className="h-3 w-3" />
-                    {scene.sceneName || scene.sceneLocation}
+                  <span className="flex min-w-0 max-w-[220px] items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary cursor-default">
+                    <MapPin className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{scene.sceneName || scene.sceneLocation}</span>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -367,7 +367,7 @@ export function SplitSceneCard({
             value={scene.shotSize}
             onChange={(v) => onUpdateShotSize(scene.id, v)}
             disabled={isGeneratingAny}
-            className="w-24"
+            className="w-24 shrink-0"
           />
         </div>
         {!isGeneratingAny && (
@@ -400,9 +400,9 @@ export function SplitSceneCard({
 
       {/* 第一排：首帧图片 + 尾帧图片 + 角色库选择 */}
       <div className="p-2 space-y-2">
-        <div className="flex gap-2">
+        <div className="flex min-w-0 gap-2">
           {/* 首帧图片 */}
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between mb-1">
               <button
                 onClick={() => setSelectedFrameTarget('start')}
@@ -525,7 +525,7 @@ export function SplitSceneCard({
           </div>
 
           {/* 尾帧图片 */}
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-1">
                 <button
@@ -689,7 +689,7 @@ export function SplitSceneCard({
           </div>
 
           {/* 角色库 + 场景参考选择 */}
-          <div className="flex flex-col gap-1 justify-end">
+          <div className="flex min-w-0 flex-col gap-1 justify-end">
             <CharacterSelector
               selectedIds={scene.characterIds || []}
               onChange={(ids) => onUpdateCharacters(scene.id, ids)}
@@ -747,9 +747,9 @@ export function SplitSceneCard({
         </div>
 
         {/* 第二排：生成图片/视频按钮 + 视频预览/状态 */}
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {!hasImage ? (
-            <div className="flex items-center gap-1">
+            <div className="flex min-w-0 items-center gap-1">
               <Button
                 size="sm"
                 variant="default"
@@ -776,7 +776,7 @@ export function SplitSceneCard({
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-1">
+            <div className="flex min-w-0 items-center gap-1">
               <Button
                 size="sm"
                 variant={isVideoReady ? "outline" : "default"}
@@ -807,9 +807,9 @@ export function SplitSceneCard({
           )}
           
           {isVideoReady && scene.videoUrl && (
-            <div className="flex items-center gap-1">
+            <div className="flex min-w-0 items-center gap-1">
               <div 
-                className="flex-1 aspect-video max-w-[120px] bg-muted rounded overflow-hidden cursor-pointer relative"
+                className="aspect-video w-[120px] shrink-0 bg-muted rounded overflow-hidden cursor-pointer relative"
                 onClick={() => setPreviewItem({ type: 'video', url: scene.videoUrl!, name: `分镜 ${scene.id + 1} 视频` })}
                 draggable={!!canDragVideo}
                 onDragStart={handleVideoDragStart}
@@ -851,15 +851,17 @@ export function SplitSceneCard({
 
           {isVideoFailed && (
             <span className={cn(
-              "text-xs flex items-center gap-1",
+              "text-xs flex items-start gap-1 min-w-0 flex-1",
               isVideoModerationSkipped 
                 ? "text-amber-500" 
                 : "text-destructive"
             )}>
-              <AlertCircle className="h-3 w-3" />
-              {isVideoModerationSkipped 
-                ? '内容审核跳过'
-                : (scene.videoError || '生成失败')}
+              <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+              <span className="min-w-0 break-all">
+                {isVideoModerationSkipped 
+                  ? '内容审核跳过'
+                  : (scene.videoError || '生成失败')}
+              </span>
             </span>
           )}
         </div>
@@ -869,12 +871,12 @@ export function SplitSceneCard({
           {/* 折叠/展开 Header：Chevron + 标题 + 填充状态徽章 */}
           <button
             onClick={() => setShowPromptDetails(!showPromptDetails)}
-            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md bg-muted/50 border hover:bg-muted/70 transition-colors"
+            className="w-full min-w-0 flex items-center gap-2 px-2.5 py-2 rounded-md bg-muted/50 border hover:bg-muted/70 transition-colors"
           >
             <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform duration-200", showPromptDetails && "rotate-90")} />
-            <span className="text-xs font-medium">提示词</span>
+            <span className="text-xs font-medium shrink-0">提示词</span>
             {/* 填充状态徽章 */}
-            <div className="flex items-center gap-1.5 ml-auto">
+            <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5">
               <span className={cn(
                 "text-[9px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-0.5 border",
                 scene.actionSummary
@@ -913,7 +915,7 @@ export function SplitSceneCard({
           </button>
 
           {showPromptDetails ? (
-            <div className="space-y-2 pl-1">
+            <div className="space-y-2 pl-1 min-w-0">
               {/* ━━ 剧本动作（提示词来源）━━ 紫色左边框 */}
               <div className="border-l-[3px] border-violet-500 pl-3 py-1 space-y-1">
                 <Label className="text-[10px] text-violet-600 dark:text-violet-400 flex items-center gap-1 font-medium">
@@ -1055,34 +1057,34 @@ export function SplitSceneCard({
           ) : (
             /* 折叠摘要视图：彩色图标标签 + 内容预览 */
             <div 
-              className="space-y-1 p-2 rounded-md bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors border border-transparent hover:border-muted"
+              className="space-y-1 p-2 rounded-md bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors border border-transparent hover:border-muted min-w-0"
               onClick={() => setShowPromptDetails(true)}
             >
-              <p className="text-[10px] truncate flex items-center gap-1.5">
+              <p className="text-[10px] flex min-w-0 items-center gap-1.5">
                 <span className="shrink-0 inline-flex items-center gap-0.5 text-violet-600 dark:text-violet-400 font-medium">
                   <Edit3 className="h-2.5 w-2.5" /> 剧本:
                 </span>
-                <span className="text-muted-foreground">{scene.actionSummary || '未设置'}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">{scene.actionSummary || '未设置'}</span>
               </p>
-              <p className="text-[10px] truncate flex items-center gap-1.5">
+              <p className="text-[10px] flex min-w-0 items-center gap-1.5">
                 <span className="shrink-0 inline-flex items-center gap-0.5 text-blue-600 dark:text-blue-400 font-medium">
                   <ImageIcon className="h-2.5 w-2.5" /> 首帧:
                 </span>
-                <span className="text-muted-foreground">{scene.imagePromptZh || scene.imagePrompt || '未设置'}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">{scene.imagePromptZh || scene.imagePrompt || '未设置'}</span>
               </p>
               {(scene.needsEndFrame || scene.endFramePromptZh || scene.endFramePrompt) && (
-                <p className="text-[10px] truncate flex items-center gap-1.5">
+                <p className="text-[10px] flex min-w-0 items-center gap-1.5">
                   <span className="shrink-0 inline-flex items-center gap-0.5 text-orange-600 dark:text-orange-400 font-medium">
                     ◉ 尾帧:
                   </span>
-                  <span className="text-orange-600/70 dark:text-orange-400/70">{scene.endFramePromptZh || scene.endFramePrompt || '未设置'}</span>
+                  <span className="min-w-0 flex-1 truncate text-orange-600/70 dark:text-orange-400/70">{scene.endFramePromptZh || scene.endFramePrompt || '未设置'}</span>
                 </p>
               )}
-              <p className="text-[10px] truncate flex items-center gap-1.5">
+              <p className="text-[10px] flex min-w-0 items-center gap-1.5">
                 <span className="shrink-0 inline-flex items-center gap-0.5 text-green-600 dark:text-green-400 font-medium">
                   <Play className="h-2.5 w-2.5" /> 视频:
                 </span>
-                <span className="text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
                   {scene.videoPromptZh || scene.videoPrompt || '未设置'}
                 {scene.cameraMovement && scene.cameraMovement !== 'none' && (
                     <span className="ml-1 text-green-500/50">[{CAMERA_MOVEMENT_PRESETS.find(p => p.id === scene.cameraMovement)?.label || scene.cameraMovement}]</span>
@@ -1208,9 +1210,9 @@ export function SplitSceneCard({
           </div>
           {/* 机位描述（AI 生成的自由文本） */}
           {scene.cameraPosition && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex min-w-0 items-center gap-1.5">
               <span className="text-[9px] text-muted-foreground shrink-0">机位:</span>
-              <span className="text-[10px] text-muted-foreground/80 truncate">{scene.cameraPosition}</span>
+              <span className="text-[10px] text-muted-foreground/80 min-w-0 flex-1 truncate">{scene.cameraPosition}</span>
             </div>
           )}
           {/* 情绪氛围 */}
@@ -1227,7 +1229,7 @@ export function SplitSceneCard({
         <div className="space-y-1">
           <Label className="text-[10px] text-muted-foreground mb-0.5 block">音频控制</Label>
           {/* 环境音 */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => onUpdateField?.(scene.id, 'audioAmbientEnabled', scene.audioAmbientEnabled === false)}
               disabled={isGeneratingAny}
@@ -1246,11 +1248,11 @@ export function SplitSceneCard({
               onChange={(e) => onUpdateAmbientSound(scene.id, e.target.value)}
               placeholder="风声、雨声、鸟鸣..."
               disabled={isGeneratingAny || scene.audioAmbientEnabled === false}
-              className="flex-1 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
+              className="flex-1 min-w-0 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
             />
           </div>
           {/* 音效 */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => onUpdateField?.(scene.id, 'audioSfxEnabled', scene.audioSfxEnabled === false)}
               disabled={isGeneratingAny}
@@ -1269,11 +1271,11 @@ export function SplitSceneCard({
               onChange={(e) => onUpdateField?.(scene.id, 'soundEffectText', e.target.value)}
               placeholder="脚步声、门关声..."
               disabled={isGeneratingAny || scene.audioSfxEnabled === false}
-              className="flex-1 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
+              className="flex-1 min-w-0 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
             />
           </div>
           {/* 对白 */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => onUpdateField?.(scene.id, 'audioDialogueEnabled', scene.audioDialogueEnabled === false)}
               disabled={isGeneratingAny}
@@ -1292,11 +1294,11 @@ export function SplitSceneCard({
               onChange={(e) => onUpdateField?.(scene.id, 'dialogue', e.target.value)}
               placeholder="角色台词..."
               disabled={isGeneratingAny || scene.audioDialogueEnabled === false}
-              className="flex-1 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
+              className="flex-1 min-w-0 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
             />
           </div>
           {/* 背景音乐 */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               onClick={() => onUpdateField?.(scene.id, 'audioBgmEnabled', !(scene.audioBgmEnabled === true))}
               disabled={isGeneratingAny}
@@ -1315,7 +1317,7 @@ export function SplitSceneCard({
               onChange={(e) => onUpdateField?.(scene.id, 'backgroundMusic', e.target.value)}
               placeholder="默认禁止背景音乐，如需要请开启并填写..."
               disabled={isGeneratingAny || scene.audioBgmEnabled !== true}
-              className="flex-1 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
+              className="flex-1 min-w-0 h-6 px-1.5 text-[10px] rounded border bg-transparent disabled:opacity-40 placeholder:text-muted-foreground/30"
             />
           </div>
         </div>

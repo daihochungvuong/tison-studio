@@ -202,6 +202,7 @@ async function submitViaChatCompletions(
     messages: [{ role: 'user', content: userContent }],
     // Standard multimodal image generation parameters
     max_tokens: 4096,
+    stream: false,
   };
 
   console.log('[ImageGenerator] Submitting via chat completions:', { model, endpoint });
@@ -223,7 +224,57 @@ async function submitViaChatCompletions(
     throw new Error(msg);
   }
 
-  const data = await response.json();
+  // Parse response — some providers return SSE "data: {...}" even with stream:false
+  const responseText = await response.text();
+  let data: any;
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    // Fallback: accumulate SSE delta chunks into a single message
+    const lines = responseText.split('\n').filter(l => l.startsWith('data: '));
+    let accumulatedText = '';
+    let accumulatedParts: any[] = [];
+    let lastChunk: any = null;
+
+    for (const line of lines) {
+      const payload = line.replace(/^data:\s*/, '').trim();
+      if (payload === '[DONE]') continue;
+      try {
+        const chunk = JSON.parse(payload);
+        lastChunk = chunk;
+        const delta = chunk.choices?.[0]?.delta;
+        if (delta) {
+          if (typeof delta.content === 'string') {
+            accumulatedText += delta.content;
+          } else if (Array.isArray(delta.content)) {
+            accumulatedParts.push(...delta.content);
+          }
+        }
+        // Also check non-delta message (some proxies mix formats)
+        const msg = chunk.choices?.[0]?.message;
+        if (msg) {
+          if (typeof msg.content === 'string') accumulatedText += msg.content;
+          else if (Array.isArray(msg.content)) accumulatedParts.push(...msg.content);
+        }
+      } catch { /* skip malformed line */ }
+    }
+
+    if (!lastChunk) {
+      throw new Error(`无法解析图片 API 响应: ${responseText.substring(0, 120)}`);
+    }
+
+    // Reconstruct standard response format from accumulated deltas
+    data = {
+      ...lastChunk,
+      choices: [{
+        ...(lastChunk.choices?.[0] || {}),
+        message: {
+          role: 'assistant',
+          content: accumulatedParts.length > 0 ? accumulatedParts : accumulatedText,
+        },
+      }],
+    };
+  }
   console.log('[ImageGenerator] Chat completions response received');
 
   // Extract image from response - multiple possible formats

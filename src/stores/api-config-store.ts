@@ -862,7 +862,7 @@ export const useAPIConfigStore = create<APIConfigStore>()(
       name: 'opencut-api-config',  // localStorage key
       version: 9,  // v9: convert platform:model bindings to id:model (fix multi-custom-provider bug)
       migrate: (persistedState: unknown, version: number) => {
-        const state = persistedState as Partial<APIConfigState> & { imageHostConfig?: LegacyImageHostConfig } | undefined;
+        let state = persistedState as (Partial<APIConfigState> & { imageHostConfig?: LegacyImageHostConfig }) | undefined;
         console.log(`[APIConfig] Migrating from version ${version}`);
         
         // Default feature bindings for migration
@@ -930,134 +930,65 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           return imageHostProviders;
         };
         
-        // v1 -> v2: Migrate apiKeys to providers
-        if (version === 1 || version === 0) {
+        // Migrations apply sequentially: each step reads and updates `state`
+        // so upgrading from e.g. v4 runs v4→v6, v6→v7, v8→v9 in order.
+
+        // v0/v1 → v2: Migrate apiKeys to providers
+        if (version <= 1) {
           const oldApiKeys = state?.apiKeys || {};
           const providers: IProvider[] = [];
-          
-          // Create provider entries from old apiKeys
           for (const template of DEFAULT_PROVIDERS) {
             const existingKey = oldApiKeys[template.platform as ProviderId] || '';
-            providers.push({
-              id: generateId(),
-              ...template,
-              apiKey: existingKey,
-            });
+            providers.push({ id: generateId(), ...template, apiKey: existingKey });
           }
-          
           console.log(`[APIConfig] Migrated ${providers.length} providers from v1`);
-          
-          return {
-            ...state,
-            providers,
-            featureBindings: defaultBindings,
-            imageHostProviders: resolveImageHostProviders(),
-            // Keep apiKeys for backward compat
-            apiKeys: oldApiKeys,
-          };
-        }
-        
-        // v2 -> v3: Ensure providers and featureBindings exist
-        if (version === 2) {
-          const providers = state?.providers || [];
-          const mergedBindings = { ...defaultBindings, ...(state?.featureBindings || {}) };
-          
-          return {
-            ...state,
-            providers,
-            featureBindings: mergedBindings,
-            imageHostProviders: resolveImageHostProviders(),
-          };
+          state = { ...state, providers, featureBindings: defaultBindings, imageHostProviders: resolveImageHostProviders(), apiKeys: oldApiKeys } as typeof state;
         }
 
-        // v3 -> v4: Ensure RunningHub model uses AppId
-        if (version === 3) {
+        // v2 → v3: Ensure providers and featureBindings exist
+        if (version <= 2) {
+          const providers = state?.providers || [];
+          const mergedBindings = { ...defaultBindings, ...(state?.featureBindings || {}) };
+          state = { ...state, providers, featureBindings: mergedBindings, imageHostProviders: resolveImageHostProviders() } as typeof state;
+        }
+
+        // v3 → v4: Ensure RunningHub model uses AppId
+        if (version <= 3) {
           const providers = (state?.providers || []).map((p: IProvider) => {
             if (p.platform === 'runninghub') {
               const hasOldModel = p.model?.includes('qwen-image-edit-angles');
               const hasAppId = p.model?.includes('2009613632530812930');
               if (!p.model || p.model.length === 0 || hasOldModel || !hasAppId) {
-                return {
-                  ...p,
-                  model: ['2009613632530812930'],
-                };
+                return { ...p, model: ['2009613632530812930'] };
               }
             }
             return p;
           });
-
-          // Ensure featureBindings exists
           const mergedBindings = { ...defaultBindings, ...(state?.featureBindings || {}) };
-
-          return {
-            ...state,
-            providers,
-            featureBindings: mergedBindings,
-            imageHostProviders: resolveImageHostProviders(),
-          };
+          state = { ...state, providers, featureBindings: mergedBindings, imageHostProviders: resolveImageHostProviders() } as typeof state;
         }
-        
-        // v8 -> v9: Convert platform:model bindings to id:model format
-        // Fixes bug where multiple custom providers all resolve to the first one
-        if (version === 8) {
-          const providers: IProvider[] = state?.providers || [];
+
+        // v4/v5 → v6: Convert featureBindings from string to string[] (multi-select)
+        if (version <= 5) {
           const oldBindings = state?.featureBindings || {};
           const newBindings: FeatureBindings = { ...defaultBindings };
-          let convertedCount = 0;
-          let removedCount = 0;
-          
           for (const [key, value] of Object.entries(oldBindings)) {
             const feature = key as AIFeature;
-            if (!Array.isArray(value)) {
-              newBindings[feature] = value ? [value as unknown as string] : null;
-              continue;
+            if (typeof value === 'string' && value) {
+              newBindings[feature] = [value];
+              console.log(`[APIConfig] Migrated ${feature}: "${value}" -> ["${value}"]`);
+            } else if (Array.isArray(value)) {
+              newBindings[feature] = value;
+            } else {
+              newBindings[feature] = null;
             }
-            const converted: string[] = [];
-            for (const binding of value) {
-              const idx = binding.indexOf(':');
-              if (idx <= 0) { converted.push(binding); continue; }
-              const platformOrId = binding.slice(0, idx);
-              const model = binding.slice(idx + 1);
-              
-              // Already in id:model format?
-              if (providers.some(p => p.id === platformOrId)) {
-                converted.push(binding);
-                continue;
-              }
-              
-              // platform:model format — find matching provider(s)
-              const matches = providers.filter(p => p.platform === platformOrId);
-              if (matches.length === 1) {
-                // Unambiguous: convert to id:model
-                const newBinding = `${matches[0].id}:${model}`;
-                converted.push(newBinding);
-                convertedCount++;
-                console.log(`[APIConfig] v8->v9: Converted binding "${binding}" -> "${newBinding}"`);
-              } else if (matches.length > 1) {
-                // Ambiguous (e.g. "custom:deepseek-chat" with multiple custom providers)
-                // Remove — user must re-bind manually
-                removedCount++;
-                console.warn(`[APIConfig] v8->v9: Removed ambiguous binding "${binding}" (${matches.length} providers with platform "${platformOrId}")`);
-              } else {
-                // No matching provider — keep as-is (orphaned binding)
-                converted.push(binding);
-              }
-            }
-            newBindings[feature] = converted.length > 0 ? converted : null;
           }
-          
-          if (convertedCount > 0 || removedCount > 0) {
-            console.log(`[APIConfig] v8->v9: Converted ${convertedCount} bindings, removed ${removedCount} ambiguous bindings`);
-          }
-          
-          return {
-            ...state,
-            featureBindings: newBindings,
-          };
+          console.log(`[APIConfig] v5->v6: Migrated featureBindings to multi-select format`);
+          state = { ...state, featureBindings: newBindings, imageHostProviders: resolveImageHostProviders() } as typeof state;
         }
-        
-        // v6 -> v7: Remove deprecated providers (dik3, nanohajimi, apimart, zhipu)
-        if (version === 6) {
+
+        // v6 → v7: Remove deprecated providers (dik3, nanohajimi, apimart, zhipu)
+        if (version <= 6) {
           const DEPRECATED_PLATFORMS = ['dik3', 'nanohajimi', 'apimart', 'zhipu'];
           const oldProviders: IProvider[] = state?.providers || [];
           const cleanedProviders = oldProviders.filter(
@@ -1067,8 +998,6 @@ export const useAPIConfigStore = create<APIConfigStore>()(
           if (removedCount > 0) {
             console.log(`[APIConfig] v6->v7: Removed ${removedCount} deprecated providers`);
           }
-          
-          // Clean featureBindings referencing deprecated providers
           const oldBindings = state?.featureBindings || {};
           const cleanedBindings: FeatureBindings = { ...defaultBindings };
           for (const [key, value] of Object.entries(oldBindings)) {
@@ -1082,69 +1011,72 @@ export const useAPIConfigStore = create<APIConfigStore>()(
               cleanedBindings[feature] = null;
             }
           }
-          
-          return {
-            ...state,
-            providers: cleanedProviders,
-            featureBindings: cleanedBindings,
-            imageHostProviders: resolveImageHostProviders(),
-          };
+          state = { ...state, providers: cleanedProviders, featureBindings: cleanedBindings, imageHostProviders: resolveImageHostProviders() } as typeof state;
         }
-        
-        // v5 -> v6: Convert featureBindings from string to string[] (multi-select)
-        if (version === 5 || version === 4) {
+
+        // v8 → v9: Convert platform:model bindings to id:model format
+        if (version <= 8) {
+          const providers: IProvider[] = state?.providers || [];
           const oldBindings = state?.featureBindings || {};
           const newBindings: FeatureBindings = { ...defaultBindings };
-          
+          let convertedCount = 0;
+          let removedCount = 0;
           for (const [key, value] of Object.entries(oldBindings)) {
             const feature = key as AIFeature;
+            if (!Array.isArray(value)) {
+              newBindings[feature] = value ? [value as unknown as string] : null;
+              continue;
+            }
+            const converted: string[] = [];
+            for (const binding of value) {
+              const idx = binding.indexOf(':');
+              if (idx <= 0) { converted.push(binding); continue; }
+              const platformOrId = binding.slice(0, idx);
+              const model = binding.slice(idx + 1);
+              if (providers.some(p => p.id === platformOrId)) {
+                converted.push(binding);
+                continue;
+              }
+              const matches = providers.filter(p => p.platform === platformOrId);
+              if (matches.length === 1) {
+                const newBinding = `${matches[0].id}:${model}`;
+                converted.push(newBinding);
+                convertedCount++;
+                console.log(`[APIConfig] v8->v9: Converted binding "${binding}" -> "${newBinding}"`);
+              } else if (matches.length > 1) {
+                removedCount++;
+                console.warn(`[APIConfig] v8->v9: Removed ambiguous binding "${binding}" (${matches.length} providers with platform "${platformOrId}")`);
+              } else {
+                converted.push(binding);
+              }
+            }
+            newBindings[feature] = converted.length > 0 ? converted : null;
+          }
+          if (convertedCount > 0 || removedCount > 0) {
+            console.log(`[APIConfig] v8->v9: Converted ${convertedCount} bindings, removed ${removedCount} ambiguous bindings`);
+          }
+          state = { ...state, featureBindings: newBindings } as typeof state;
+        }
+
+        // Final: ensure featureBindings exists with all keys, normalize string→string[]
+        const finalBindings: FeatureBindings = { ...defaultBindings };
+        if (state?.featureBindings) {
+          for (const [key, value] of Object.entries(state.featureBindings)) {
+            const feature = key as AIFeature;
             if (typeof value === 'string' && value) {
-              // 将单选字符串转为数组
-              newBindings[feature] = [value];
-              console.log(`[APIConfig] Migrated ${feature}: "${value}" -> ["${value}"]`);
+              finalBindings[feature] = [value];
             } else if (Array.isArray(value)) {
-              // 已经是数组，保持不变
-              newBindings[feature] = value;
+              finalBindings[feature] = value;
             } else {
-              newBindings[feature] = null;
+              finalBindings[feature] = null;
             }
           }
-          
-          console.log(`[APIConfig] v5->v6: Migrated featureBindings to multi-select format`);
-          
-          return {
-            ...state,
-            featureBindings: newBindings,
-            imageHostProviders: resolveImageHostProviders(),
-          };
         }
-        
-        // Ensure featureBindings exists (for any version)
-        if (!state?.featureBindings) {
-          return {
-            ...state,
-            featureBindings: defaultBindings,
-            imageHostProviders: resolveImageHostProviders(),
-          };
-        }
-        
-        // Ensure all feature keys exist and migrate string -> string[]
-        const mergedBindings: FeatureBindings = { ...defaultBindings };
-        for (const [key, value] of Object.entries(state.featureBindings)) {
-          const feature = key as AIFeature;
-          if (typeof value === 'string' && value) {
-            mergedBindings[feature] = [value];
-          } else if (Array.isArray(value)) {
-            mergedBindings[feature] = value;
-          } else {
-            mergedBindings[feature] = null;
-          }
-        }
-        
+
         return {
           ...state,
-          featureBindings: mergedBindings,
-          imageHostProviders: resolveImageHostProviders(),
+          featureBindings: finalBindings,
+          imageHostProviders: state?.imageHostProviders || resolveImageHostProviders(),
         };
       },
       partialize: (state) => ({

@@ -139,6 +139,7 @@ const GROK_VIDEO_VARIANTS = [
 ];
 
 const GEMINI_IMAGE_VARIANTS = [
+  'gemini-3.1-pro-image-preview',
   'gemini-3-pro-image-preview',
   'gemini-2.5-flash-image',
   'gemini-2.5-flash-image-preview',
@@ -276,6 +277,7 @@ const VIDEO_FAMILY_VARIANTS: Record<string, string[]> = {
 
 const IMAGE_FAMILY_VARIANTS: Record<string, string[]> = {
   // Gemini image
+  'gemini-3.1-pro-image-preview': GEMINI_IMAGE_VARIANTS,
   'gemini-3-pro-image-preview': GEMINI_IMAGE_VARIANTS,
   'gemini-2.5-flash-image': GEMINI_IMAGE_VARIANTS,
   'gemini-2.5-flash-image-preview': GEMINI_IMAGE_VARIANTS,

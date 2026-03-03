@@ -14,7 +14,7 @@
  * 5. 大师级场景视觉设计（专业提示词生成）
  */
 
-import type { ScriptScene, ProjectBackground, EpisodeRawScript, SceneRawContent } from '@/types/script';
+import type { ScriptScene, ProjectBackground, EpisodeRawScript, SceneRawContent, PromptLanguage } from '@/types/script';
 import { callFeatureAPI } from '@/lib/ai/feature-router';
 import { processBatched } from '@/lib/ai/batch-processor';
 import { estimateTokens, safeTruncate } from '@/lib/ai/model-registry';
@@ -95,6 +95,7 @@ export interface CalibrationOptions {
   apiKey?: string;
   provider?: string;
   baseUrl?: string;
+  promptLanguage?: PromptLanguage;
 }
 
 // ==================== 统计函数 ====================
@@ -473,7 +474,8 @@ ${sceneList}
     // 为主要场景生成专业视觉提示词
     const enrichedScenes = await enrichScenesWithVisualPrompts(
       scenes,
-      background
+      background,
+      _options?.promptLanguage || 'zh+en'
     );
     
     return {
@@ -536,7 +538,8 @@ export async function calibrateEpisodeScenes(
  */
 async function enrichScenesWithVisualPrompts(
   scenes: CalibratedScene[],
-  background: ProjectBackground
+  background: ProjectBackground,
+  promptLanguage: PromptLanguage = 'zh+en'
 ): Promise<CalibratedScene[]> {
   // 只为主要场景和次要场景生成详细提示词
   const keyScenes = scenes.filter(s => 
@@ -578,16 +581,14 @@ ${keyScenes.map((s, i) => `${i+1}. ${s.name}
 
 【输出要求】
 为每个场景生成：
-1. 中文视觉描述（100-150字，包含空间感、氛围、细节）
-2. 英文视觉提示词（50-80词，适合AI图像生成，包含风格、光影、构图）
+${promptLanguage !== 'en' ? '- 中文视觉描述（100-150字，包含空间感、氛围、细节）' : ''}
+${promptLanguage !== 'zh' ? '- 英文视觉提示词（50-80词，适合AI图像生成，包含风格、光影、构图）' : ''}
 
 请返回JSON格式：
 {
   "scenes": [
     {
-      "name": "场景名",
-      "visualPromptZh": "中文视觉描述",
-      "visualPromptEn": "English visual prompt for AI image generation"
+      "name": "场景名"${promptLanguage !== 'en' ? ',\n      "visualPromptZh": "中文视觉描述"' : ''}${promptLanguage !== 'zh' ? ',\n      "visualPromptEn": "English visual prompt for AI image generation"' : ''}
     }
   ]
 }`;
@@ -635,7 +636,8 @@ ${keyScenes.map((s, i) => `${i+1}. ${s.name}
  */
 export function convertToScriptScenes(
   calibrated: CalibratedScene[],
-  originalScenes?: ScriptScene[]
+  originalScenes?: ScriptScene[],
+  promptLanguage: PromptLanguage = 'zh+en',
 ): ScriptScene[] {
   return calibrated.map(c => {
     // 查找原始场景数据
@@ -647,6 +649,8 @@ export function convertToScriptScenes(
     
     // 清理地点字符串
     const cleanedLocation = cleanLocationString(c.location);
+    const nextVisualPromptZh = c.visualPromptZh || original?.visualPrompt;
+    const nextVisualPromptEn = c.visualPromptEn || original?.visualPromptEn;
     
     return {
       // 保留原始字段
@@ -658,8 +662,8 @@ export function convertToScriptScenes(
       time: c.time,
       atmosphere: c.atmosphere,
       // 专业场景设计字段
-      visualPrompt: c.visualPromptZh,
-      visualPromptEn: c.visualPromptEn,
+      visualPrompt: promptLanguage === 'en' ? undefined : nextVisualPromptZh,
+      visualPromptEn: promptLanguage === 'zh' ? undefined : nextVisualPromptEn,
       architectureStyle: c.architectureStyle,
       lightingDesign: c.lightingDesign,
       colorPalette: c.colorPalette,

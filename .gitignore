@@ -53,6 +53,11 @@ S级*
 # Apifox / API debug files
 *.apifox.json
 
+# Temporary screenshots & archives
+*.zip
+BUGFIX-LOG.md
+20*.png
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

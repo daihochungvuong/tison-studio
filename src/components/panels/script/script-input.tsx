@@ -38,6 +38,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { StylePicker } from "@/components/ui/style-picker";
 import type { VisualStyleId } from "@/lib/constants/visual-styles";
+import type { PromptLanguage } from "@/types/script";
+
+const PROMPT_LANGUAGE_OPTIONS = [
+  { value: "zh", label: "仅中文" },
+  { value: "en", label: "仅英文" },
+  { value: "zh+en", label: "中英文" },
+];
 
 const DURATION_OPTIONS = [
   { value: "auto", label: "自动" },
@@ -111,6 +118,9 @@ interface ScriptInputProps {
   sceneCalibrationStatus?: 'idle' | 'calibrating' | 'completed' | 'error';
   // 二次校准追踪（中栏独立按钮触发）
   secondPassTypes?: Set<string>;
+  // 提示词语言
+  promptLanguage?: PromptLanguage;
+  onPromptLanguageChange?: (value: PromptLanguage) => void;
 }
 
 export function ScriptInput({
@@ -144,6 +154,8 @@ export function ScriptInput({
   characterCalibrationStatus,
   sceneCalibrationStatus,
   secondPassTypes,
+  promptLanguage,
+  onPromptLanguageChange,
 }: ScriptInputProps) {
   const [mode, setMode] = useState<"import" | "create">("import");
   const [idea, setIdea] = useState("");
@@ -479,6 +491,29 @@ export function ScriptInput({
               </Select>
             </div>
 
+            <div className="space-y-1">
+              <Label className="text-xs">提示词语言</Label>
+              <Select
+                value={promptLanguage || "zh"}
+                onValueChange={(v) => onPromptLanguageChange?.(v as PromptLanguage)}
+                disabled={parseStatus === "parsing"}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROMPT_LANGUAGE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                控制AI校准生成中/英文提示词，默认仅中文可减少生成压力
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-xs">场景数量（可选）</Label>
@@ -587,6 +622,28 @@ export function ScriptInput({
         {/* 创作模式：显示语言、时长、风格、场景数量、分镜数量 */}
         {mode === "create" && (
           <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">提示词语言</Label>
+              <Select
+                value={promptLanguage || "zh"}
+                onValueChange={(v) => onPromptLanguageChange?.(v as PromptLanguage)}
+                disabled={parseStatus === "parsing"}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROMPT_LANGUAGE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                控制AI生成中/英文提示词，默认仅中文可减少生成压力
+              </p>
+            </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="space-y-1">
                 <Label className="text-xs">语言</Label>

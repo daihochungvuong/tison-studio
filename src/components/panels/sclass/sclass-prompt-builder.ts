@@ -731,11 +731,7 @@ export function buildGroupPrompt(options: BuildGroupPromptOptions): GroupPromptR
     promptParts.push(dialoguePart);
   }
 
-  // 风格
-  if (styleTokens && styleTokens.length > 0) {
-    promptParts.push('');
-    promptParts.push(`风格：${styleTokens.join('、')}`);
-  }
+  // 风格（不再注入：校准后的各镜头 prompt 已包含风格描述）
 
   // 宽高比提示
   if (aspectRatio) {
@@ -853,10 +849,7 @@ function buildExtendEditPrompt(
     }
   }
 
-  // 风格
-  if (styleTokens && styleTokens.length > 0) {
-    promptParts.push(`风格：${styleTokens.join('、')}`);
-  }
+  // 风格（不再注入：校准后的各镜头 prompt 已包含风格描述）
 
   const prompt = promptParts.join('\n');
 

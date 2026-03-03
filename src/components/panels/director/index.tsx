@@ -575,7 +575,7 @@ export function DirectorView() {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-w-0 flex flex-col">
       {/* Header */}
       <div className="p-3 pb-2 bg-panel">
         <div className="flex items-center justify-between">
@@ -611,7 +611,7 @@ export function DirectorView() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-3 pt-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <div className="flex-1 min-w-0 overflow-x-hidden overflow-y-auto p-3 pt-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {renderContent()}
       </div>
 

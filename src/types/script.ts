@@ -4,6 +4,9 @@
 // 完成状态
 export type CompletionStatus = 'pending' | 'in_progress' | 'completed';
 
+// 提示词语言选项
+export type PromptLanguage = 'zh' | 'en' | 'zh+en';
+
 /**
  * 角色阶段信息
  * 用于标识角色在特定集数范围内的形象版本
@@ -426,7 +429,9 @@ export interface Shot {
   
   // === 叙事驱动字段（基于《电影语言的语法》） ===
   narrativeFunction?: string;   // 叙事功能：铺垫/升级/高潮/转折/过渡/尾声
-  shotPurpose?: string;         // 镜头目的：为什么用这个镜头
+  conflictStage?: string;       // 冲突阶段：引入/激化/对抗/转折/解决/余波/辅助
+  shotPurpose?: string;         // 镜头目的：此镜头如何服务于故事核心
+  storyAlignment?: string;      // 与世界观/故事核心的一致性：aligned/minor-deviation/needs-review
   visualFocus?: string;         // 视觉焦点：观众应该看什么（按顺序）
   cameraPosition?: string;      // 机位描述：摄影机相对于人物的位置
   characterBlocking?: string;   // 人物布局：人物在画面中的位置关系

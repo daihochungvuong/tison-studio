@@ -234,7 +234,7 @@ function detectVideoApiFormat(model: string): 'openai_official' | 'unified' | 'v
   const m = model.toLowerCase();
   if (m.includes('sora-2')) return 'openai_official';
   if (m.includes('kling')) return 'kling';
-  // doubao-seedance routes via '豆包视频异步' endpoint type → volc
+  if (m.includes('seedance') || m.includes('doubao')) return 'volc';
   if (m.includes('wan')) return 'wan';
   return 'unified';
 }

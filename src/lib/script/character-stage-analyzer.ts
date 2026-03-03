@@ -12,7 +12,7 @@
  * 3. 每个变体包含集数范围，供分镜时自动调用
  */
 
-import type { ProjectBackground, ScriptCharacter } from '@/types/script';
+import type { ProjectBackground, ScriptCharacter, PromptLanguage } from '@/types/script';
 import type { CharacterVariation } from '@/stores/character-library-store';
 import { callFeatureAPI } from '@/lib/ai/feature-router';
 
@@ -54,7 +54,8 @@ export interface StageVariationData {
 export async function analyzeCharacterStages(
   background: ProjectBackground,
   characters: ScriptCharacter[],
-  totalEpisodes: number
+  totalEpisodes: number,
+  promptLanguage: PromptLanguage = 'zh+en'
 ): Promise<CharacterStageAnalysis[]> {
   
   // 只分析主要角色（前3个或有详细描述的）
@@ -122,16 +123,14 @@ ${mainCharacters.map(c => `
           "episodeRange": [1, 15],
           "ageDescription": "25岁",
           "stageDescription": "985毕业生，意气风发，白衬衫",
-          "visualPromptEn": "25 year old Chinese male, clean-cut appearance, white dress shirt, confident and ambitious look, bright eyes, athletic build",
-          "visualPromptZh": "25岁中国男性，干净利落的外表，白色衬衫，自信有抱负的神态，明亮的眼睛，健壮体格"
+${promptLanguage !== 'en' ? '          "visualPromptZh": "25岁中国男性，干净利落的外表，白色衬衫，自信有抱负的神态"' : ''}${promptLanguage !== 'zh' ? `${promptLanguage === 'zh+en' ? ',' : ''}\n          "visualPromptEn": "25 year old Chinese male, clean-cut appearance, white dress shirt, confident and ambitious look"` : ''}
         },
         {
           "name": "中年版",
           "episodeRange": [16, 40],
           "ageDescription": "35-40岁",
           "stageDescription": "事业有成的企业家，更加沉稳",
-          "visualPromptEn": "35-40 year old Chinese male, mature businessman look, tailored suit, weathered but determined face, slight wrinkles, commanding presence",
-          "visualPromptZh": "35-40岁中国男性，成熟商人形象，剪裁合身的西装，饱经风霜但坚定的面容，轻微皱纹，气场强大"
+${promptLanguage !== 'en' ? '          "visualPromptZh": "35-40岁中国男性，成熟商人形象，剪裁合身的西装"' : ''}${promptLanguage !== 'zh' ? `${promptLanguage === 'zh+en' ? ',' : ''}\n          "visualPromptEn": "35-40 year old Chinese male, mature businessman look, tailored suit, commanding presence"` : ''}
         }
       ],
       "consistencyElements": {

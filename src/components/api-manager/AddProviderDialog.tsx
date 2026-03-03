@@ -55,6 +55,7 @@ const PLATFORM_PRESETS: Array<{
       "deepseek-v3.2",
       "glm-4.7",
       "gemini-3-pro-preview",
+      "gemini-3.1-pro-image-preview",
       "gemini-3-pro-image-preview",
       "gpt-image-1.5",
       "doubao-seedance-1-5-pro-251215",
@@ -240,6 +241,16 @@ export function AddProviderDialog({
             <p className="text-xs text-muted-foreground">
               支持多个 Key，用逗号分隔
             </p>
+            {platform === "memefast" && (
+              <div className="rounded-md bg-red-600 p-3 text-xs space-y-1.5 text-white">
+                <p className="font-bold text-sm">⚠️ 令牌分组配置提醒</p>
+                <p>在魔因API创建令牌时，请务必为令牌添加以下 <span className="font-bold">4个分组</span>，否则无法正常使用：</p>
+                <div className="space-y-1">
+                  <p className="font-bold">图片：<span className="font-normal">限时特价、优质gemini</span></p>
+                  <p className="font-bold">视频：<span className="font-normal">官转、auto</span></p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Model - optional input */}

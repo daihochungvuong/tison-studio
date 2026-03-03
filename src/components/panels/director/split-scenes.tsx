@@ -90,6 +90,7 @@ import {
 } from "@/lib/constants/visual-styles";
 import { getCinematographyProfile, DEFAULT_CINEMATOGRAPHY_PROFILE_ID } from "@/lib/constants/cinematography-profiles";
 import { buildVideoPrompt, buildEmotionDescription as buildEmotionDesc } from "@/lib/generation/prompt-builder";
+import { recalibrateSplitScenes } from "@/lib/script/recalibrate-scenes";
 import { StylePicker } from "@/components/ui/style-picker";
 import { CinematographyProfilePicker } from "@/components/ui/cinematography-profile-picker";
 
@@ -103,7 +104,7 @@ const SceneCard = SplitSceneCard;
 
 export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   // ========== 合并生成（九宫格）本地 UI 状态 ==========
-  const [imageGenMode, setImageGenMode] = useState<'single' | 'merged'>('single');
+const [imageGenMode, setImageGenMode] = useState<'single' | 'merged'>('merged');
   const [frameMode, setFrameMode] = useState<'first' | 'last' | 'both'>('first');
   const [isMergedRunning, setIsMergedRunning] = useState(false);
   const [refStrategy, setRefStrategy] = useState<'cluster'|'minimal'|'none'>('cluster');
@@ -213,6 +214,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     addAngleSwitchHistory,
     deleteSplitScene,
     resetStoryboard,
+    setSplitScenes,
     // 预告片功能
     clearTrailer,
     // 摄影风格档案
@@ -244,15 +246,44 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     toast.success('摄影风格已更新');
   }, [setCinematographyProfileId]);
 
-  // Update style
-  const handleStyleChange = useCallback((styleId: string) => {
+  // Update style（事务化：先校准成功再提交风格+分镜）
+  const handleStyleChange = useCallback(async (styleId: string) => {
     const style = getStyleById(styleId);
-    if (style) {
-      // 直接存储风格 ID，同时保留 styleTokens（完整 prompt）兼容旧逻辑
-      setStoryboardConfig({ visualStyleId: styleId, styleTokens: [style.prompt] });
+    if (!style) return;
+
+    // 旧项目兼容：calibratedStyleId 可能为 undefined，用 currentStyleId 作 fallback
+    const effectiveCalibratedStyleId = storyboardConfig.calibratedStyleId || currentStyleId;
+
+    // 有分镜且风格不同 → 需要重新校准
+    if (splitScenes.length > 0 && styleId !== effectiveCalibratedStyleId) {
+      const confirmed = window.confirm(
+        '切换风格后，所有分镜的提示词和拍摄参数需要重新校准以匹配新风格。\n已生成的图片和视频不会丢失。\n\n是否继续？'
+      );
+      if (!confirmed) return;
+
+      const toastId = toast.loading('正在用新风格重新校准分镜...');
+      try {
+        const result = await recalibrateSplitScenes(
+          styleId,
+          splitScenes,
+          undefined,
+          (_cur, _total, msg) => toast.loading(msg, { id: toastId }),
+        );
+        // 成功：一次性提交分镜 + 风格
+        setSplitScenes(result.scenes);
+        setStoryboardConfig({ visualStyleId: styleId, styleTokens: [style.prompt], calibratedStyleId: styleId });
+        toast.success(`已切换为 ${style.name} 风格，${result.calibratedCount} 个分镜已重新校准`, { id: toastId });
+      } catch (err) {
+        // 失败：不改任何东西
+        console.error('[handleStyleChange] 重新校准失败:', err);
+        toast.error(`风格切换失败: ${err instanceof Error ? err.message : '校准出错'}`, { id: toastId });
+      }
+    } else {
+      // 无分镜 或 风格相同：直接更新
+      setStoryboardConfig({ visualStyleId: styleId, styleTokens: [style.prompt], calibratedStyleId: styleId });
       toast.success(`已切换为 ${style.name} 风格`);
     }
-  }, [setStoryboardConfig]);
+  }, [setStoryboardConfig, setSplitScenes, splitScenes, storyboardConfig.calibratedStyleId, currentStyleId]);
 
   // Update aspect ratio
   const handleAspectRatioChange = useCallback((ratio: '16:9' | '9:16') => {
@@ -696,8 +727,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       const sceneContext = [scene.sceneName, scene.sceneLocation].filter(Boolean).join(' - ');
       const settingContext = sceneContext ? `Setting: ${sceneContext}. ` : '';
 
-      // === 风格键字组 ===
-      const styleStr = styleTokens.length > 0 ? `Artistic style consistent: ${styleTokens.join(', ')}. ` : '';
+      // === 风格键字组（不再注入：校准后的 prompt 已包含风格描述） ===
 
       // Build 2x2 grid prompt
       const gridPromptParts: string[] = [];
@@ -715,7 +745,6 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       if (settingContext) gridPromptParts.push(settingContext);
       if (actionContext) gridPromptParts.push(actionContext);
       if (moodContext) gridPromptParts.push(moodContext);
-      if (styleStr) gridPromptParts.push(styleStr);
       
       // === 一致性键字组（与 buildAnchorPhrase 一致） ===
       gridPromptParts.push('Keep character appearance, wardrobe and facial features consistent across all 4 panels.');
@@ -1769,11 +1798,10 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     return result;
   };
 
-  const buildAnchorPhrase = (styleTokens?: string[]) => {
-    const style = styleTokens && styleTokens.length > 0 ? `Artistic style consistent: ${styleTokens.join(', ')}. ` : '';
-    // 强制禁止生成文字，防止出现对话气泡、字幕等
+  const buildAnchorPhrase = (_styleTokens?: string[]) => {
+    // styleTokens 不再注入（校准后的 prompt 已包含风格描述，避免双重注入）
     const noTextConstraint = 'IMPORTANT: NO TEXT, NO WORDS, NO LETTERS, NO CAPTIONS, NO SPEECH BUBBLES, NO DIALOGUE BOXES, NO SUBTITLES, NO WRITING of any kind.';
-    return `${style}Keep character appearance, wardrobe and facial features consistent. Keep lighting and color grading consistent. ${noTextConstraint}`;
+    return `Keep character appearance, wardrobe and facial features consistent. Keep lighting and color grading consistent. ${noTextConstraint}`;
   };
 
   const composeTilePrompt = (scene: SplitScene, angle: Angle, aspect: '16:9'|'9:16', styleTokens?: string[]) => {
@@ -1783,7 +1811,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     // 禁用相机运动与节奏，仅保留视角/景别/构图
     const cameraPart = `${angle}, ${shot}`;
     const anchor = buildAnchorPhrase(styleTokens);
-    const style = styleTokens && styleTokens.length > 0 ? ` Style: ${styleTokens.join(', ')}` : '';
+    // styleTokens 不再末尾追加（校准后的 imagePrompt 已包含风格描述）
     
     // 人物数量约束：根据 characterIds 数量明确指定，防止模型生成多余人物
     const charCount = scene.characterIds?.length || 0;
@@ -1793,7 +1821,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         ? 'EXACTLY ONE person in frame, single character only, do NOT duplicate the character.'
         : `EXACTLY ${charCount} distinct people in frame, no more no less, each person appears only ONCE.`;
     
-    const prompt = `${cameraPart}, ${vertical}${charCountPhrase} ${base}. ${anchor}.${style}`.replace(/\s+/g, ' ').trim();
+    const prompt = `${cameraPart}, ${vertical}${charCountPhrase} ${base}. ${anchor}.`.replace(/\s+/g, ' ').trim();
     return prompt;
   };
 
@@ -2067,10 +2095,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         gridPromptParts.push(`Panel [row ${row}, col ${col}]: empty placeholder, solid gray background`);
       }
       
-      // 5. 全局风格
-      if (styleTokens.length > 0) {
-        gridPromptParts.push(`Style: ${styleTokens.join(', ')}`);
-      }
+      // 5. 全局风格（不再注入：校准后的各 panel prompt 已包含风格描述）
       
       // 6. 负面提示词 (Negative Constraints)
       gridPromptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy.');
@@ -2693,7 +2718,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0 w-full overflow-x-hidden">
       {/* 顶部 Tab 切换 */}
       <div className="border-b -mx-4 px-4 -mt-4 pt-4">
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "editing" | "trailer")} className="w-full">
@@ -2877,7 +2902,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
               </div>
 
               {/* Scene list - 完全复用分镜编辑的 SceneCard */}
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 min-w-0">
                 {trailerScenes.map((scene) => (
                   <SceneCard
                     key={scene.id}
@@ -3208,7 +3233,7 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       )}
 
       {/* Scene list */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 min-w-0">
         {splitScenes.map((scene) => (
           <SceneCard
             key={scene.id}

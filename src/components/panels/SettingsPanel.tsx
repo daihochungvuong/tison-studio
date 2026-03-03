@@ -130,6 +130,66 @@ export function SettingsPanel() {
   const [isCacheLoading, setIsCacheLoading] = useState(false);
   const [isClearingCache, setIsClearingCache] = useState(false);
 
+  // ====== Memefast 默认绑定自动补全 ======
+  // 覆盖场景：
+  //  1. 旧版本升级后已有 key 但 featureBindings 为空
+  //  2. 旧版本留下无效绑定（模型名错、provider ID 变更等）
+  //  3. 用户编辑填 key 后页面刷新
+  useEffect(() => {
+    const mf = providers.find(p => p.platform === 'memefast');
+    if (!mf || parseApiKeys(mf.apiKey).length === 0) return;
+
+    const pid = mf.id;
+    const models = mf.model || [];
+    const defaults: Record<string, string> = {
+      script_analysis: `${pid}:deepseek-v3.2`,
+      character_generation: `${pid}:gemini-3.1-pro-image-preview`,
+      video_generation: `${pid}:doubao-seedance-1-5-pro-251215`,
+      image_understanding: `${pid}:gemini-2.5-flash`,
+    };
+
+    // 检查绑定是否有效
+    const isBindingValid = (b: string): boolean => {
+      const idx = b.indexOf(':');
+      if (idx <= 0) return false;
+      const ref = b.slice(0, idx);
+      const model = b.slice(idx + 1);
+      const p = providers.find(pv => pv.id === ref || pv.platform === ref);
+      if (!p || parseApiKeys(p.apiKey).length === 0) return false;
+      // 模型列表为空时（尚未同步）暂时信任绑定
+      if (p.model.length === 0) return true;
+      return p.model.includes(model);
+    };
+
+    let changed = false;
+    for (const [feature, binding] of Object.entries(defaults)) {
+      const cur = getFeatureBindings(feature as AIFeature);
+
+      // 自愈：deepseek-v3 → deepseek-v3.2（在校验之前先迁移）
+      if (feature === 'script_analysis' && cur && cur.some(b => b.endsWith(':deepseek-v3'))) {
+        const migrated = cur.map(b => {
+          if (!b.endsWith(':deepseek-v3')) return b;
+          const i = b.indexOf(':');
+          return i > 0 ? `${b.slice(0, i)}:deepseek-v3.2` : binding;
+        });
+        setFeatureBindings(feature as AIFeature, [...new Set(migrated)]);
+        changed = true;
+        continue;
+      }
+
+      // 为空 或 全部无效 → 重新设置默认值
+      const needsDefault = !cur || cur.length === 0 || !cur.some(isBindingValid);
+      if (needsDefault) {
+        setFeatureBindings(feature as AIFeature, [binding]);
+        changed = true;
+      }
+    }
+    if (changed) {
+      console.log('[SettingsPanel] Auto-applied memefast default bindings');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers]);
+
   // Toggle provider expansion
   const toggleExpanded = (id: string) => {
     setExpandedProviders((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -894,7 +954,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.9 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1040,7 +1100,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.9 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1183,7 +1243,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.9 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1391,7 +1451,7 @@ export function SettingsPanel() {
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
                 <p className="text-sm font-medium">魔因漫创 Moyin Creator</p>
-                <p className="text-xs mt-1">v0.1.7 · AI 驱动的动漫视频创作工具</p>
+                <p className="text-xs mt-1">v0.1.9 · AI 驱动的动漫视频创作工具</p>
               </div>
             </div>
           </ScrollArea>
@@ -1422,15 +1482,33 @@ export function SettingsPanel() {
             // 使用 provider.id（而非 platform 字符串）避免多供应商时的歧义解析
             const pid = provider.id;
             const MEMEFAST_DEFAULT_BINDINGS: Record<string, string> = {
-              script_analysis: `${pid}:deepseek-v3`,
-              character_generation: `${pid}:gemini-3-pro-image-preview`,
+              // NOTE: MemeFast 端点已升级，旧的 deepseek-v3 已不在列表中，改用 deepseek-v3.2
+              script_analysis: `${pid}:deepseek-v3.2`,
+              character_generation: `${pid}:gemini-3.1-pro-image-preview`,
               video_generation: `${pid}:doubao-seedance-1-5-pro-251215`,
               image_understanding: `${pid}:gemini-2.5-flash`,
             };
             for (const [feature, binding] of Object.entries(MEMEFAST_DEFAULT_BINDINGS)) {
               const current = getFeatureBindings(feature as AIFeature);
+              // 仅在未配置时设置默认值，避免覆盖用户手动选择
               if (!current || current.length === 0) {
                 setFeatureBindings(feature as AIFeature, [binding]);
+                continue;
+              }
+              // 自愈：旧默认 deepseek-v3 -> deepseek-v3.2（尽量不破坏多选配置）
+              if (feature === 'script_analysis') {
+                const hasOld = current.some((b) => b.endsWith(':deepseek-v3'));
+                if (hasOld) {
+                  const migrated = current.map((b) => {
+                    if (!b.endsWith(':deepseek-v3')) return b;
+                    const idx = b.indexOf(':');
+                    if (idx <= 0) return binding;
+                    const prefix = b.slice(0, idx);
+                    return `${prefix}:deepseek-v3.2`;
+                  });
+                  const deduped = Array.from(new Set(migrated));
+                  setFeatureBindings(feature as AIFeature, deduped);
+                }
               }
             }
           }
@@ -1457,6 +1535,41 @@ export function SettingsPanel() {
         provider={editingProvider}
         onSave={(provider) => {
           updateProvider(provider);
+
+          // 编辑 memefast 时也自动设置默认服务映射：初始状态会预置一个空 key 的 memefast，
+          // 用户通常是“编辑填 key”，如果不在这里补默认映射，会导致服务映射一直是 0/6。
+          if (provider.platform === 'memefast' && parseApiKeys(provider.apiKey).length > 0) {
+            const pid = provider.id;
+            const MEMEFAST_DEFAULT_BINDINGS: Record<string, string> = {
+              // NOTE: MemeFast 端点已升级，旧的 deepseek-v3 已不在列表中，改用 deepseek-v3.2
+              script_analysis: `${pid}:deepseek-v3.2`,
+              character_generation: `${pid}:gemini-3.1-pro-image-preview`,
+              video_generation: `${pid}:doubao-seedance-1-5-pro-251215`,
+              image_understanding: `${pid}:gemini-2.5-flash`,
+            };
+            for (const [feature, binding] of Object.entries(MEMEFAST_DEFAULT_BINDINGS)) {
+              const current = getFeatureBindings(feature as AIFeature);
+              if (!current || current.length === 0) {
+                setFeatureBindings(feature as AIFeature, [binding]);
+                continue;
+              }
+              // 自愈：旧默认 deepseek-v3 -> deepseek-v3.2
+              if (feature === 'script_analysis') {
+                const hasOld = current.some((b) => b.endsWith(':deepseek-v3'));
+                if (hasOld) {
+                  const migrated = current.map((b) => {
+                    if (!b.endsWith(':deepseek-v3')) return b;
+                    const idx = b.indexOf(':');
+                    if (idx <= 0) return binding;
+                    const prefix = b.slice(0, idx);
+                    return `${prefix}:deepseek-v3.2`;
+                  });
+                  const deduped = Array.from(new Set(migrated));
+                  setFeatureBindings(feature as AIFeature, deduped);
+                }
+              }
+            }
+          }
           // 编辑保存后自动同步模型列表和端点元数据
           if (parseApiKeys(provider.apiKey).length > 0) {
             setSyncingProvider(provider.id);

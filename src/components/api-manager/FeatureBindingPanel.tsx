@@ -70,7 +70,7 @@ const FEATURE_CONFIGS: FeatureMeta[] = [
     description: "生成角色和场景参考图",
     icon: <Image className="h-4 w-4" />,
     requiredCapability: "image_generation",
-    recommendation: "💎 推荐使用 gemini-3-pro-image-preview（Nano Banana）— 画质优秀、一致性好",
+    recommendation: "推荐使用 gemini-3.1-pro-image-preview（Nano Banana 2）— 画质优秀、一致性好",
   },
   {
     key: "video_generation",
@@ -78,7 +78,7 @@ const FEATURE_CONFIGS: FeatureMeta[] = [
     description: "将图片转换为视频",
     icon: <Video className="h-4 w-4" />,
     requiredCapability: "video_generation",
-    recommendation: "🧪 测试推荐 doubao-seedream-4-5-251128 — 适合快速验证流程",
+    recommendation: "🎬 推荐使用 doubao-seedance-1-5-pro-251215 — 视频生成质量优秀、效果稳定",
   },
   {
     key: "image_understanding",
@@ -148,6 +148,7 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability[]> = {
   // ---- 图片生成模型 ----
   'cogview-3-plus': ['image_generation'],
   'gemini-imagen': ['image_generation'],
+  'gemini-3.1-pro-image-preview': ['image_generation'],
   'gemini-3-pro-image-preview': ['image_generation'],
   'gpt-image-1.5': ['image_generation'],
 

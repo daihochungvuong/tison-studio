@@ -10,7 +10,8 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   // ==================== 图像模型 ====================
 
   // --- Google / Gemini ---
-  'gemini-3-pro-image-preview': 'Nano Banana 2 (Gemini 3 Pro)',
+  'gemini-3.1-pro-image-preview': 'Nano Banana 2 (Gemini 3.1 Pro)',
+  'gemini-3-pro-image-preview': 'Nano Banana Pro (Gemini 3 Pro)',
   'gemini-2.5-flash-image': 'Nano Banana (Gemini 2.5 Flash)',
   'gemini-2.5-flash-image-preview': 'Nano Banana Preview (Gemini 2.5 Flash)',
   'aigc-image-gem': 'AIGC Gemini 绘图',

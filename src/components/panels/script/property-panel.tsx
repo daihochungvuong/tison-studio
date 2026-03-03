@@ -11,6 +11,7 @@
 import { useState, useEffect } from "react";
 import type { ScriptCharacter, ScriptScene, Shot, CompletionStatus, Episode, EpisodeRawScript } from "@/types/script";
 import { getShotCompletionStatus } from "@/lib/script/shot-utils";
+import { useActiveScriptProject } from "@/stores/script-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -148,6 +149,8 @@ export function PropertyPanel({
   const [copiedCharacter, setCopiedCharacter] = useState(false);
   const [copiedShotPrompts, setCopiedShotPrompts] = useState(false);
   const [copiedScene, setCopiedScene] = useState(false);
+  const scriptProject = useActiveScriptProject();
+  const promptLanguage = scriptProject?.promptLanguage || 'zh';
 
   // 复制场景数据
   const handleCopySceneData = async () => {
@@ -176,11 +179,13 @@ export function PropertyPanel({
       lines.push('');
     }
     
-    // 视觉提示词
-    if (scene.visualPrompt || scene.visualPromptEn) {
+    // 视觉提示词（按提示词语言显示）
+    const includeZhScenePrompt = promptLanguage !== 'en';
+    const includeEnScenePrompt = promptLanguage !== 'zh';
+    if ((includeZhScenePrompt && scene.visualPrompt) || (includeEnScenePrompt && scene.visualPromptEn)) {
       lines.push(`## 视觉提示词`);
-      if (scene.visualPrompt) lines.push(`中文：${scene.visualPrompt}`);
-      if (scene.visualPromptEn) lines.push(`English: ${scene.visualPromptEn}`);
+      if (includeZhScenePrompt && scene.visualPrompt) lines.push(`中文：${scene.visualPrompt}`);
+      if (includeEnScenePrompt && scene.visualPromptEn) lines.push(`English: ${scene.visualPromptEn}`);
       lines.push('');
     }
     
@@ -432,20 +437,38 @@ export function PropertyPanel({
         const tags = s.emotionTags.map(t => emotionLabels[t] || t).join('、');
         lines.push(`**情绪**: ${tags}`);
       }
-      if ((s as any).visualPrompt) {
+      if (promptLanguage !== 'zh' && (s as any).visualPrompt) {
         lines.push(`**英文Prompt**: ${(s as any).visualPrompt}`);
       }
       // 三层提示词系统
       if (s.imagePromptZh || s.imagePrompt) {
-        lines.push(`**首帧提示词**: ${s.imagePromptZh || ''} ${s.imagePrompt ? `(EN: ${s.imagePrompt})` : ''}`);
+        if (promptLanguage === 'zh') {
+          lines.push(`**首帧提示词**: ${s.imagePromptZh || ''}`);
+        } else if (promptLanguage === 'en') {
+          lines.push(`**首帧提示词**: ${s.imagePrompt || ''}`);
+        } else {
+          lines.push(`**首帧提示词**: ${s.imagePromptZh || ''} ${s.imagePrompt ? `(EN: ${s.imagePrompt})` : ''}`);
+        }
       }
       if (s.videoPromptZh || s.videoPrompt) {
-        lines.push(`**视频提示词**: ${s.videoPromptZh || ''} ${s.videoPrompt ? `(EN: ${s.videoPrompt})` : ''}`);
+        if (promptLanguage === 'zh') {
+          lines.push(`**视频提示词**: ${s.videoPromptZh || ''}`);
+        } else if (promptLanguage === 'en') {
+          lines.push(`**视频提示词**: ${s.videoPrompt || ''}`);
+        } else {
+          lines.push(`**视频提示词**: ${s.videoPromptZh || ''} ${s.videoPrompt ? `(EN: ${s.videoPrompt})` : ''}`);
+        }
       }
       if (s.needsEndFrame) {
         lines.push(`**需要尾帧**: 是`);
         if (s.endFramePromptZh || s.endFramePrompt) {
-          lines.push(`**尾帧提示词**: ${s.endFramePromptZh || ''} ${s.endFramePrompt ? `(EN: ${s.endFramePrompt})` : ''}`);
+          if (promptLanguage === 'zh') {
+            lines.push(`**尾帧提示词**: ${s.endFramePromptZh || ''}`);
+          } else if (promptLanguage === 'en') {
+            lines.push(`**尾帧提示词**: ${s.endFramePrompt || ''}`);
+          } else {
+            lines.push(`**尾帧提示词**: ${s.endFramePromptZh || ''} ${s.endFramePrompt ? `(EN: ${s.endFramePrompt})` : ''}`);
+          }
         }
       }
       lines.push('');
@@ -574,13 +597,17 @@ export function PropertyPanel({
       lines.push('───────────────────────────────────────');
       lines.push('【首帧提示词】用于生成视频的第一帧图片');
       lines.push('───────────────────────────────────────');
-      if (shot.imagePromptZh) {
+      if (promptLanguage !== 'en' && shot.imagePromptZh) {
         lines.push(`中文: ${shot.imagePromptZh}`);
       }
-      if (shot.imagePrompt) {
+      if (promptLanguage !== 'zh' && shot.imagePrompt) {
         lines.push(`English: ${shot.imagePrompt}`);
       }
-      if (!shot.imagePrompt && !shot.imagePromptZh) {
+      if (
+        (promptLanguage === 'zh' && !shot.imagePromptZh) ||
+        (promptLanguage === 'en' && !shot.imagePrompt) ||
+        (promptLanguage === 'zh+en' && !shot.imagePrompt && !shot.imagePromptZh)
+      ) {
         lines.push('(未生成)');
       }
       lines.push('');
@@ -589,13 +616,17 @@ export function PropertyPanel({
       lines.push('───────────────────────────────────────');
       lines.push('【视频提示词】用于图生视频，描述动作和运动');
       lines.push('───────────────────────────────────────');
-      if (shot.videoPromptZh) {
+      if (promptLanguage !== 'en' && shot.videoPromptZh) {
         lines.push(`中文: ${shot.videoPromptZh}`);
       }
-      if (shot.videoPrompt) {
+      if (promptLanguage !== 'zh' && shot.videoPrompt) {
         lines.push(`English: ${shot.videoPrompt}`);
       }
-      if (!shot.videoPrompt && !shot.videoPromptZh) {
+      if (
+        (promptLanguage === 'zh' && !shot.videoPromptZh) ||
+        (promptLanguage === 'en' && !shot.videoPrompt) ||
+        (promptLanguage === 'zh+en' && !shot.videoPrompt && !shot.videoPromptZh)
+      ) {
         lines.push('(未生成)');
       }
       lines.push('');
@@ -606,13 +637,17 @@ export function PropertyPanel({
       lines.push('───────────────────────────────────────');
       if (shot.needsEndFrame) {
         lines.push('需要尾帧: ✓ 是');
-        if (shot.endFramePromptZh) {
+        if (promptLanguage !== 'en' && shot.endFramePromptZh) {
           lines.push(`中文: ${shot.endFramePromptZh}`);
         }
-        if (shot.endFramePrompt) {
+        if (promptLanguage !== 'zh' && shot.endFramePrompt) {
           lines.push(`English: ${shot.endFramePrompt}`);
         }
-        if (!shot.endFramePrompt && !shot.endFramePromptZh) {
+        if (
+          (promptLanguage === 'zh' && !shot.endFramePromptZh) ||
+          (promptLanguage === 'en' && !shot.endFramePrompt) ||
+          (promptLanguage === 'zh+en' && !shot.endFramePrompt && !shot.endFramePromptZh)
+        ) {
           lines.push('(未生成)');
         }
       } else {
@@ -919,13 +954,13 @@ export function PropertyPanel({
               )}
               
               {/* 视觉提示词（世界级大师生成） */}
-              {(character.visualPromptEn || character.visualPromptZh) && (
+              {((promptLanguage !== 'en' && character.visualPromptZh) || (promptLanguage !== 'zh' && character.visualPromptEn)) && (
                 <div className="bg-gradient-to-r from-purple-500/10 to-transparent p-2 rounded-lg border-l-2 border-purple-500/30">
                   <div className="text-xs text-purple-600 dark:text-purple-400 mb-1">🎨 视觉提示词</div>
-                  {character.visualPromptZh && (
+                  {promptLanguage !== 'en' && character.visualPromptZh && (
                     <div className="text-xs text-muted-foreground mb-1">{character.visualPromptZh}</div>
                   )}
-                  {character.visualPromptEn && (
+                  {promptLanguage !== 'zh' && character.visualPromptEn && (
                     <div className="text-xs text-muted-foreground/70 italic">{character.visualPromptEn}</div>
                   )}
                 </div>
@@ -1192,18 +1227,18 @@ export function PropertyPanel({
               )}
               
               {/* 视觉提示词（AI校准后显示） */}
-              {(scene.visualPrompt || scene.visualPromptEn) && (
+              {((promptLanguage !== 'en' && scene.visualPrompt) || (promptLanguage !== 'zh' && scene.visualPromptEn)) && (
                 <>
                   <Separator className="my-2" />
                   <div className="text-xs font-medium text-primary mb-2">视觉提示词</div>
                   
-                  {scene.visualPrompt && (
+                  {promptLanguage !== 'en' && scene.visualPrompt && (
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">中文</div>
                       <div className="text-sm text-muted-foreground">{scene.visualPrompt}</div>
                     </div>
                   )}
-                  {scene.visualPromptEn && (
+                  {promptLanguage !== 'zh' && scene.visualPromptEn && (
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">English</div>
                       <div className="text-sm text-muted-foreground italic">{scene.visualPromptEn}</div>

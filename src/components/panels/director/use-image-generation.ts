@@ -239,10 +239,10 @@ export function allocateAngles(count: number, preselected: (string | undefined)[
   return result;
 }
 
-export function buildAnchorPhrase(styleTokens?: string[]): string {
-  const style = styleTokens && styleTokens.length > 0 ? `Artistic style consistent: ${styleTokens.join(', ')}. ` : '';
+export function buildAnchorPhrase(_styleTokens?: string[]): string {
+  // styleTokens 不再注入（校准后的 prompt 已包含风格描述，避免双重注入）
   const noTextConstraint = 'IMPORTANT: NO TEXT, NO WORDS, NO LETTERS, NO CAPTIONS, NO SPEECH BUBBLES, NO DIALOGUE BOXES, NO SUBTITLES, NO WRITING of any kind.';
-  return `${style}Keep character appearance, wardrobe and facial features consistent. Keep lighting and color grading consistent. ${noTextConstraint}`;
+  return `Keep character appearance, wardrobe and facial features consistent. Keep lighting and color grading consistent. ${noTextConstraint}`;
 }
 
 export function composeTilePrompt(scene: SplitScene, angle: Angle, aspect: '16:9'|'9:16', styleTokens?: string[]): string {
@@ -251,7 +251,7 @@ export function composeTilePrompt(scene: SplitScene, angle: Angle, aspect: '16:9
   const vertical = aspect === '9:16' ? 'vertical composition, tighter framing, avoid letterboxing, ' : '';
   const cameraPart = `${angle}, ${shot}`;
   const anchor = buildAnchorPhrase(styleTokens);
-  const style = styleTokens && styleTokens.length > 0 ? ` Style: ${styleTokens.join(', ')}` : '';
+  // styleTokens 不再末尾追加（校准后的 imagePrompt 已包含风格描述）
   
   const charCount = scene.characterIds?.length || 0;
   const charCountPhrase = charCount === 0 
@@ -260,7 +260,7 @@ export function composeTilePrompt(scene: SplitScene, angle: Angle, aspect: '16:9
       ? 'EXACTLY ONE person in frame, single character only, do NOT duplicate the character.'
       : `EXACTLY ${charCount} distinct people in frame, no more no less, each person appears only ONCE.`;
   
-  const prompt = `${cameraPart}, ${vertical}${charCountPhrase} ${base}. ${anchor}.${style}`.replace(/\s+/g, ' ').trim();
+  const prompt = `${cameraPart}, ${vertical}${charCountPhrase} ${base}. ${anchor}.`.replace(/\s+/g, ' ').trim();
   return prompt;
 }
 
@@ -325,9 +325,7 @@ export function buildGridPrompt(
     gridPromptParts.push(`Panel [row ${row}, col ${col}] ${charConstraint}: ${desc}`);
   });
   
-  if (styleTokens.length > 0) {
-    gridPromptParts.push(`Style for all panels: ${styleTokens.join(', ')}`);
-  }
+  // styleTokens 不再注入（校准后的各 panel prompt 已包含风格描述）
   gridPromptParts.push('Keep consistent character appearance, lighting, and color grading across all panels.');
   gridPromptParts.push('CRITICAL: NO TEXT, NO WORDS, NO LETTERS, NO CAPTIONS, NO SPEECH BUBBLES, NO DIALOGUE BOXES, NO SUBTITLES in any panel.');
   

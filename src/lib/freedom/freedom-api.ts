@@ -161,6 +161,7 @@ type FreedomImageRoute = 'midjourney' | 'ideogram' | 'kling_image' | 'openai_cha
 function detectFreedomImageRoute(model: string, endpointTypes?: string[]): FreedomImageRoute {
   const lower = model.toLowerCase();
   const hasEndpoint = (re: RegExp) => (endpointTypes || []).some((t) => re.test(t));
+  const hasExactEndpoint = (name: string) => (endpointTypes || []).includes(name);
 
   if (/^mj_/i.test(model) || /midjourney/i.test(model) || /^niji-/i.test(model) || hasEndpoint(/midjourney/i)) {
     return 'midjourney';
@@ -168,7 +169,8 @@ function detectFreedomImageRoute(model: string, endpointTypes?: string[]): Freed
   if (/^ideogram_/i.test(model)) {
     return 'ideogram';
   }
-  if (/^kling-(image|omni-image)$/i.test(model)) {
+  // Kling image: 模型名检测 + 端点元数据检测
+  if (/^kling-(image|omni-image)/i.test(model) || hasExactEndpoint('kling生图') || hasExactEndpoint('omni-image') || hasExactEndpoint('文生图')) {
     return 'kling_image';
   }
 
@@ -239,7 +241,7 @@ function detectFreedomVideoRoute(model: string, endpointTypes?: string[]): Freed
   const m = model.toLowerCase();
   if (m.includes('sora-2')) return 'openai_official';
   if (m.includes('kling')) return 'kling';
-  // doubao-seedance routes via '豆包视频异步' endpoint type → volc (/volc/v1/contents/generations/tasks)
+  if (m.includes('seedance') || m.includes('doubao')) return 'volc';
   if (m.includes('wan')) return 'wan';
   return 'unified';
 }
@@ -1191,10 +1193,23 @@ async function generateVideoViaVolc(
   if (params.aspectRatio) promptParts.push(`--rt ${params.aspectRatio}`);
   if (params.duration) promptParts.push(`--dur ${params.duration}`);
 
-  const body = {
-    model,
-    content: [{ type: 'text', text: promptParts.join(' ') }],
-  };
+  const content: Array<Record<string, unknown>> = [
+    { type: 'text', text: promptParts.join(' ') },
+  ];
+
+  // 附加上传图片（首帧/尾帧），对齐 Director 面板的 callVolcVideoApi
+  const grouped = groupVideoUploadFiles(params.uploadFiles);
+  const primaryFile = grouped.single || grouped.first;
+  if (primaryFile) {
+    const url = await toUploadHttpUrl(primaryFile);
+    content.push({ type: 'image_url', image_url: { url }, role: 'first_frame' });
+  }
+  if (grouped.last) {
+    const url = await toUploadHttpUrl(grouped.last);
+    content.push({ type: 'image_url', image_url: { url }, role: 'last_frame' });
+  }
+
+  const body = { model, content };
 
   const submitResp = await fetch(`${rootBase}/volc/v1/contents/generations/tasks`, {
     method: 'POST',

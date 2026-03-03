@@ -14,7 +14,7 @@
  * 5. AI 补充角色信息（年龄、性别、关系）
  */
 
-import type { ScriptCharacter, ProjectBackground, EpisodeRawScript, CharacterIdentityAnchors, CharacterNegativePrompt } from '@/types/script';
+import type { ScriptCharacter, ProjectBackground, EpisodeRawScript, CharacterIdentityAnchors, CharacterNegativePrompt, PromptLanguage } from '@/types/script';
 import { callFeatureAPI } from '@/lib/ai/feature-router';
 import { processBatched } from '@/lib/ai/batch-processor';
 import { estimateTokens, safeTruncate } from '@/lib/ai/model-registry';
@@ -82,6 +82,8 @@ export interface MergeRecord {
 export interface CalibrationOptions {
   /** 上次校准的角色列表，用于合并确保角色不丢失 */
   previousCharacters?: CalibratedCharacter[];
+  /** 提示词语言选项 */
+  promptLanguage?: PromptLanguage;
 }
 
 // ==================== 从剧本重新提取角色 ====================
@@ -266,6 +268,7 @@ export async function calibrateCharacters(
   options?: CalibrationOptions
 ): Promise<CharacterCalibrationResult> {
   const previousCharacters = options?.previousCharacters;
+  const promptLanguage = options?.promptLanguage || 'zh+en';
   
   // 1. 先统计每个角色的出场情况
   const characterNames = rawCharacters.map(c => c.name);
@@ -595,7 +598,8 @@ ${batchDialogues.slice(0, 100).join('\n')}
     enrichedCharacters = await enrichCharactersWithVisualPrompts(
       characters,
       background,
-      episodeScripts
+      episodeScripts,
+      promptLanguage
     );
     console.log('[CharacterCalibrator] 视觉提示词生成完成');
   } catch (enrichError) {
@@ -698,12 +702,15 @@ function collectCharacterContexts(
  */
 export function convertToScriptCharacters(
   calibrated: CalibratedCharacter[],
-  originalCharacters?: ScriptCharacter[]
+  originalCharacters?: ScriptCharacter[],
+  promptLanguage: PromptLanguage = 'zh+en',
 ): ScriptCharacter[] {
   return calibrated.map(c => {
     // 查找原始角色数据
     const original = originalCharacters?.find(orig => orig.name === c.name);
     
+    const nextVisualPromptEn = c.visualPromptEn || original?.visualPromptEn;
+    const nextVisualPromptZh = c.visualPromptZh || original?.visualPromptZh;
     // 合并：保留原始数据，只补充/更新 AI 生成的字段
     return {
       // 保留原始字段
@@ -716,8 +723,8 @@ export function convertToScriptCharacters(
       gender: c.gender || original?.gender,
       relationships: c.relationships || original?.relationships,
       // === 专业角色设计字段（世界级大师生成）===
-      visualPromptEn: c.visualPromptEn || original?.visualPromptEn,
-      visualPromptZh: c.visualPromptZh || original?.visualPromptZh,
+      visualPromptEn: promptLanguage === 'zh' ? undefined : nextVisualPromptEn,
+      visualPromptZh: promptLanguage === 'en' ? undefined : nextVisualPromptZh,
       appearance: c.facialFeatures || c.uniqueMarks || c.clothingStyle 
         ? [c.facialFeatures, c.uniqueMarks, c.clothingStyle].filter(Boolean).join(', ')
         : original?.appearance,
@@ -753,7 +760,8 @@ export function sortByImportance(characters: CalibratedCharacter[]): CalibratedC
 async function enrichCharactersWithVisualPrompts(
   characters: CalibratedCharacter[],
   background: ProjectBackground,
-  episodeScripts: EpisodeRawScript[]
+  episodeScripts: EpisodeRawScript[],
+  promptLanguage: PromptLanguage = 'zh+en'
 ): Promise<CalibratedCharacter[]> {
   // 只为主角和重要配角生成详细提示词
   const keyCharacters = characters.filter(c => 
@@ -804,8 +812,62 @@ async function enrichCharactersWithVisualPrompts(
 请设计符合当代中国的服装风格，年轻人穿时尚休闲装，中年人穿商务休闲装，老年人穿舒适传统服装。
 绝对不要设计成古装、汉服、或古代服饰。`;
     }
-    
-    return '';
+
+    // 民国时期
+    if (timeline.includes('民国') || timeline.includes('近代') || timeline.includes('清末')) {
+      return `【${timeline}服装指导】
+- 男性：长衫马褂、中山装、西装礼帽（上层社会）、布衣长衫（平民）
+- 女性：旗袍、女学生装（上衣下裙）、短发或盘发
+- 禁止出现T恤、牛仔裤、运动鞋等现代服饰
+- 禁止出现手机、电脑等现代电子产品`;
+    }
+
+    // 古代各朝代
+    if (/唐朝|唐代/.test(timeline)) {
+      return `【唐朝服装指导】
+- 男性：圆领袍、幞头、革带；武将可穿铠甲
+- 女性：高腰襟裙、披帛、发髀簪起、花钗装饰
+- 绝对禁止任何现代服装（西装/T恤/牵仔裤/运动鞋）`;
+    }
+    if (/宋朝|宋代/.test(timeline)) {
+      return `【宋朝服装指导】
+- 男性：直裰、交领袖衫、乌纱帽；文人偏素雅
+- 女性：褒子、裙、披帛，发型简约典雅
+- 绝对禁止任何现代服装`;
+    }
+    if (/明朝|明代/.test(timeline)) {
+      return `【明朝服装指导】
+- 男性：曳服、直裰、网巾或乌纱帽
+- 女性：交领衫、马面裙、披风，发型丰富多变
+- 绝对禁止任何现代服装`;
+    }
+    if (/清朝|清代/.test(timeline)) {
+      return `【清朝服装指导】
+- 男性：长袍马褂、瓜皮帽、辨子；官员穿补服
+- 女性：旗装（溜肩、立领、宽松）、旗头或两把头
+- 绝对禁止任何现代服装`;
+    }
+
+    // 泛古代/武侠/仙侠/宫斗/玄幻等
+    if (/古代|武侠|仙侠|玄幻|宫斗|宅斗|战国|春秋|汉朝|三国|历史/.test(timeline)) {
+      return `【${timeline}服装指导】
+- 所有角色必须穿着中国古代服饰（长袍、袖衫、披风、带子等）
+- 发型必须是古代式样（簪发、发髀、束发、发笪等）
+- 武侠/仙侠可加入飘逸江湖风格元素（剑、披风、护腕等）
+- 绝对禁止任何现代服装（西装/T恤/牛仔裤/运动鞋/手机/眼镜等）`;
+    }
+
+    // 科幻/未来
+    if (/科幻|未来|星际|太空/.test(timeline)) {
+      return `【${timeline}服装指导】
+- 可以设计未来感/科技感服装，但需保持内部一致性
+- 禁止出现与世界观不符的服装元素`;
+    }
+
+    // 其他未识别的时代 — 用通用约束而非返回空
+    return `【${timeline}服装指导】
+请根据「${timeline}」时代背景设计角色服装，服装、发型、配饰必须严格符合该时代特征。
+绝对禁止出现与该时代不符的服装元素。`;
   };
   
   const eraFashionGuidance = getEraFashionGuidance();
@@ -873,16 +935,15 @@ ${background.characterBios?.slice(0, 1200) || '无'}
 - styleExclusions: 风格排除（如 anime style, cartoon, painting）
 
 【服装要求】
-- 服装必须符合故事发生的年代（${background.storyStartYear || background.era || '现代'}）
-- 根据角色年龄设计合适的服装
-- 绝对不要设计成古装、汉服、或不符合时代的服饰
+- 服装必须严格符合故事设定的时代背景（${background.era || '现代'}）
+- 根据角色年龄和身份设计合适的服装
+- 绝对不要设计与剧本时代不符的服饰（如古装剧禁止现代服装，现代剧禁止古代服饰）
 
 请返回JSON格式（注意：只返回单个角色对象，不要数组包裹）：
 {
   "name": "角色名",
   "detailedDescription": "详细的中文角色描述（100-200字）",
-  "visualPromptEn": "English visual prompt, 40-60 words",
-  "visualPromptZh": "中文视觉提示词",
+${promptLanguage === 'zh' ? '  "visualPromptZh": "中文视觉提示词",' : promptLanguage === 'en' ? '  "visualPromptEn": "English visual prompt, 40-60 words",' : '  "visualPromptEn": "English visual prompt, 40-60 words",\n  "visualPromptZh": "中文视觉提示词",'}
   "clothingStyle": "符合年代的服装风格",
   "identityAnchors": {
     "faceShape": "oval",

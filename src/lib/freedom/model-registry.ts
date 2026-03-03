@@ -567,6 +567,19 @@ export const T2I_MODELS: T2IModel[] = [
   },
   // 36
   {
+    id: 'nano-banana-2',
+    providerAliases: ["nano-banana-2","gemini-3.1-pro-image-preview"],
+    name: 'Nano Banana 2',
+    inputs: {
+      prompt: promptInput(),
+      aspect_ratio: aspectRatioInput([
+        '1:1', '3:4', '4:3', '9:16', '16:9', '3:2', '2:3', '5:4', '4:5', '21:9',
+      ]),
+      resolution: resolutionInput(['1k', '2k', '4k']),
+    },
+  },
+  // 37
+  {
     id: 'nano-banana-pro',
     providerAliases: ["nano-banana-pro","gemini-3-pro-image-preview"],
     name: 'Nano Banana Pro',

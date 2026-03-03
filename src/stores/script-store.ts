@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { createProjectScopedStorage } from "@/lib/project-storage";
-import type { ScriptData, Shot, Episode, ScriptScene, ScriptCharacter, EpisodeRawScript, ProjectBackground } from "@/types/script";
+import type { ScriptData, Shot, Episode, ScriptScene, ScriptCharacter, EpisodeRawScript, ProjectBackground, PromptLanguage } from "@/types/script";
 
 export type ParseStatus = "idle" | "parsing" | "ready" | "error";
 export type ShotListStatus = "idle" | "generating" | "ready" | "error";
@@ -37,6 +37,7 @@ export interface ScriptProjectData {
   episodeRawScripts: EpisodeRawScript[];        // 各集原始剧本内容
   metadataMarkdown: string;                     // 自动生成的项目元数据 MD（作为 AI 生成的全局参考）
   metadataGeneratedAt?: number;                 // 元数据生成时间
+  promptLanguage: PromptLanguage;               // 提示词语言选项（默认仅中文）
 }
 
 interface ScriptStoreState {
@@ -81,6 +82,7 @@ interface ScriptStoreActions {
   setEpisodeRawScripts: (projectId: string, scripts: EpisodeRawScript[]) => void;
   updateEpisodeRawScript: (projectId: string, episodeIndex: number, updates: Partial<EpisodeRawScript>) => void;
   setMetadataMarkdown: (projectId: string, markdown: string) => void;
+  setPromptLanguage: (projectId: string, lang: PromptLanguage) => void;
 }
 
 type ScriptStore = ScriptStoreState & ScriptStoreActions;
@@ -107,6 +109,7 @@ const defaultProjectData = (): ScriptProjectData => ({
   episodeRawScripts: [],
   metadataMarkdown: '',
   metadataGeneratedAt: undefined,
+  promptLanguage: 'zh',
 });
 
 export const useScriptStore = create<ScriptStore>()(
@@ -631,6 +634,20 @@ export const useScriptStore = create<ScriptStore>()(
               ...state.projects[projectId],
               metadataMarkdown: markdown,
               metadataGeneratedAt: Date.now(),
+              updatedAt: Date.now(),
+            },
+          },
+        }));
+      },
+
+      setPromptLanguage: (projectId, lang) => {
+        get().ensureProject(projectId);
+        set((state) => ({
+          projects: {
+            ...state.projects,
+            [projectId]: {
+              ...state.projects[projectId],
+              promptLanguage: lang,
               updatedAt: Date.now(),
             },
           },

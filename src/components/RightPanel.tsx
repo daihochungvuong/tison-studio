@@ -12,10 +12,14 @@ export function RightPanel() {
     switch (activeTab) {
       case "director":
       case "sclass":
-        return <DirectorContextPanel />;
+        return (
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <DirectorContextPanel />
+          </div>
+        );
       default:
         return (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+          <div className="flex-1 min-w-0 flex items-center justify-center text-muted-foreground text-sm">
             <p>待定</p>
           </div>
         );
@@ -23,7 +27,7 @@ export function RightPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-panel">
+    <div className="h-full min-w-0 flex flex-col overflow-hidden bg-panel">
       <div className="p-3 border-b border-border">
         <h3 className="font-medium text-sm">属性</h3>
       </div>

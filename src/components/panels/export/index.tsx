@@ -8,11 +8,13 @@
  * Based on CineGen-AI StageExport.tsx
  */
 
+import { useState, useCallback } from "react";
 import { useScriptStore, useActiveScriptProject } from "@/stores/script-store";
 import { useActiveDirectorProject } from "@/stores/director-store";
 import { useProjectStore } from "@/stores/project-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import {
   Film,
   Download,
@@ -22,41 +24,147 @@ import {
   Clock,
   CheckCircle,
   BarChart3,
-  Clapperboard,
+  Loader2,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  exportDirectorToFolder,
+  exportDirectorFiles,
+  getDirectorExportStats,
+  exportProjectToFolder,
+  exportProjectFiles,
+  getExportStats,
+  type ExportProgress,
+} from "@/lib/script/export-service";
+import { toast } from "sonner";
 
 export function ExportView() {
   const { activeProject } = useProjectStore();
   const scriptProject = useActiveScriptProject();
   const directorProject = useActiveDirectorProject();
 
+  // Export state
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+
   const shots = scriptProject?.shots || [];
   const splitScenes = directorProject?.splitScenes || [];
   const scriptData = scriptProject?.scriptData;
   const targetDuration = scriptProject?.targetDuration || "60s";
+  const projectName = (scriptData?.title || activeProject?.name || '未命名项目').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_');
 
   // === 进度计算：合并 Script shots 和 Director splitScenes 的状态 ===
-  // Director 的 splitScenes 是实际生成作业的主数据源
-  const directorCompleted = splitScenes.filter(
-    (s) => s.videoStatus === 'completed' || (s.imageStatus === 'completed' && s.videoUrl)
-  ).length;
-  const directorWithImage = splitScenes.filter((s) => s.imageStatus === 'completed').length;
-  // Script 侧的独立生成（通过 shot-list 生成的）
-  const scriptCompleted = shots.filter((s) => s.imageUrl || s.videoUrl).length;
-
-  // 优先使用 Director 的进度，因为这是实际工作流
   const hasSplitScenes = splitScenes.length > 0;
+
+  // Director stats
+  const directorStats = hasSplitScenes ? getDirectorExportStats(splitScenes) : null;
+  const directorCompleted = directorStats?.videosReady || 0;
+  const directorWithImage = directorStats?.imagesReady || 0;
+
+  // Script stats
+  const scriptStats = !hasSplitScenes && shots.length > 0 ? getExportStats(shots) : null;
+  const scriptCompleted = scriptStats ? scriptStats.imagesReady + scriptStats.videosReady : 0;
+
   const totalItems = hasSplitScenes ? splitScenes.length : shots.length;
   const completedItems = hasSplitScenes ? directorCompleted : scriptCompleted;
-  const imageReadyItems = hasSplitScenes ? directorWithImage : scriptCompleted;
+  const imageReadyItems = hasSplitScenes ? directorWithImage : (scriptStats?.imagesReady || 0);
   const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
   const imageProgress = totalItems > 0 ? Math.round((imageReadyItems / totalItems) * 100) : 0;
 
-  // 估算时长：使用实际时长数据
+  // Can export: any assets available
+  const canExport = hasSplitScenes
+    ? (directorStats?.canExport || false)
+    : (scriptStats?.canExport || false);
+
+  // 估算时长
   const estimatedDuration = hasSplitScenes
     ? splitScenes.reduce((acc, s) => acc + (s.duration || 5), 0)
     : shots.reduce((acc, s) => acc + (s.duration || 3), 0);
+
+  // === Export handlers ===
+  const handleExportToFolder = useCallback(async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportProgress({ current: 0, total: 0, message: '准备导出...' });
+
+    try {
+      if (hasSplitScenes) {
+        const success = await exportDirectorToFolder(
+          {
+            projectName,
+            scenes: splitScenes,
+            includeImages: true,
+            includeVideos: true,
+            includeEndFrames: true,
+          },
+          (p) => setExportProgress(p)
+        );
+        if (success) toast.success('导出完成！');
+      } else if (scriptData) {
+        const success = await exportProjectToFolder(
+          {
+            projectName,
+            scriptData,
+            shots,
+            targetDuration,
+            includeImages: true,
+            includeVideos: true,
+            format: 'folder',
+          },
+          (p) => setExportProgress(p)
+        );
+        if (success) toast.success('导出完成！');
+      } else {
+        toast.error('没有可导出的数据');
+      }
+    } catch (error) {
+      toast.error(`导出失败: ${(error as Error).message}`);
+    } finally {
+      setIsExporting(false);
+      setExportProgress(null);
+    }
+  }, [isExporting, hasSplitScenes, splitScenes, scriptData, shots, targetDuration, projectName]);
+
+  const handleDownloadFiles = useCallback(async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportProgress({ current: 0, total: 0, message: '准备下载...' });
+
+    try {
+      if (hasSplitScenes) {
+        await exportDirectorFiles(
+          {
+            projectName,
+            scenes: splitScenes,
+            includeImages: true,
+            includeVideos: true,
+            includeEndFrames: true,
+          },
+          (p) => setExportProgress(p)
+        );
+      } else if (scriptData) {
+        await exportProjectFiles(
+          {
+            projectName,
+            scriptData,
+            shots,
+            targetDuration,
+            includeImages: true,
+            includeVideos: true,
+            format: 'folder',
+          },
+          (p) => setExportProgress(p)
+        );
+      }
+      toast.success('下载完成！');
+    } catch (error) {
+      toast.error(`下载失败: ${(error as Error).message}`);
+    } finally {
+      setIsExporting(false);
+      setExportProgress(null);
+    }
+  }, [isExporting, hasSplitScenes, splitScenes, scriptData, shots, targetDuration, projectName]);
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden">
@@ -214,39 +322,74 @@ export function ExportView() {
                 )}
               </div>
 
+              {/* Export Progress */}
+              {exportProgress && (
+                <div className="mb-6 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{exportProgress.message}</span>
+                    {exportProgress.total > 0 && (
+                      <span>{exportProgress.current}/{exportProgress.total}</span>
+                    )}
+                  </div>
+                  <Progress
+                    value={exportProgress.total > 0 ? (exportProgress.current / exportProgress.total) * 100 : 0}
+                    className="h-1.5"
+                  />
+                </div>
+              )}
+
               {/* Action Buttons */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Button
-                  disabled={progress < 100}
+                  disabled={!canExport || isExporting}
+                  onClick={handleExportToFolder}
                   className={cn(
                     "h-12 font-bold text-xs uppercase tracking-widest transition-all",
-                    progress === 100
+                    canExport && !isExporting
                       ? "bg-primary text-primary-foreground hover:bg-primary/90"
                       : "bg-muted text-muted-foreground cursor-not-allowed"
                   )}
                 >
-                  <Download className="w-4 h-4 mr-2" />
-                  Download Master (.mp4)
+                  {isExporting ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />导出中...</>
+                  ) : (
+                    <><FolderOpen className="w-4 h-4 mr-2" />选择文件夹导出</>
+                  )}
                 </Button>
 
                 <Button
                   variant="outline"
+                  disabled={!canExport || isExporting}
+                  onClick={handleDownloadFiles}
                   className="h-12 font-bold text-xs uppercase tracking-widest"
                 >
-                  <FileVideo className="w-4 h-4 mr-2" />
-                  Export EDL / XML
+                  <Download className="w-4 h-4 mr-2" />
+                  逐个下载素材
                 </Button>
               </div>
+
+              {/* Export stats hint */}
+              {hasSplitScenes && directorStats && (
+                <div className="mt-4 text-xs text-muted-foreground">
+                  可导出: {directorStats.imagesReady} 张首帧 · {directorStats.videosReady} 个视频{directorStats.endFramesReady > 0 ? ` · ${directorStats.endFramesReady} 张尾帧` : ''}
+                </div>
+              )}
             </div>
 
             {/* Secondary Options */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="p-5 bg-card border border-border rounded-xl hover:border-primary/50 transition-colors group cursor-pointer flex flex-col justify-between h-32">
+              <div
+                onClick={canExport && !isExporting ? handleDownloadFiles : undefined}
+                className={cn(
+                  "p-5 bg-card border border-border rounded-xl transition-colors group flex flex-col justify-between h-32",
+                  canExport && !isExporting ? "hover:border-primary/50 cursor-pointer" : "opacity-50 cursor-not-allowed"
+                )}
+              >
                 <Layers className="w-5 h-5 text-muted-foreground group-hover:text-primary mb-4 transition-colors" />
                 <div>
-                  <h4 className="text-sm font-bold text-foreground mb-1">Source Assets</h4>
+                  <h4 className="text-sm font-bold text-foreground mb-1">素材下载</h4>
                   <p className="text-[10px] text-muted-foreground">
-                    Download all generated images and raw video clips.
+                    下载所有已生成的图片和视频素材
                   </p>
                 </div>
               </div>

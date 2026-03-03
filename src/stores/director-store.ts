@@ -295,6 +295,8 @@ export interface DirectorProjectData {
     storyPrompt: string;
     /** 直接存储的视觉风格预设 ID（如 '2d_ghibli'），用于精确反查 */
     visualStyleId?: string;
+    /** 当前分镜数据对应的已校准风格 ID（切换风格时用于判断是否需要重新校准） */
+    calibratedStyleId?: string;
     styleTokens?: string[];
     characterReferenceImages?: string[];
     characterDescriptions?: string[];
@@ -1336,7 +1338,7 @@ export const useDirectorStore = create<DirectorStore>()(
     if (!activeProjectId) return;
     const project = projects[activeProjectId];
     const splitScenes = project?.splitScenes || [];
-    const startId = splitScenes.length > 0 ? Math.max(...splitScenes.map(s => s.id)) + 1 : 1;
+    const startId = splitScenes.length > 0 ? Math.max(...splitScenes.map(s => s.id)) + 1 : 0;
     
     const newScenes: SplitScene[] = scenes.map((scene, index) => ({
       id: startId + index,
@@ -1420,11 +1422,18 @@ export const useDirectorStore = create<DirectorStore>()(
       videoMediaId: null,
     }));
     
+    // 将 calibratedStyleId 初始化为当前 visualStyleId（新增分镜时标记校准风格）
+    const currentConfig = project.storyboardConfig;
+    const calibratedUpdate = currentConfig.visualStyleId && !currentConfig.calibratedStyleId
+      ? { storyboardConfig: { ...currentConfig, calibratedStyleId: currentConfig.visualStyleId } }
+      : {};
+
     set({
       projects: {
         ...projects,
         [activeProjectId]: {
           ...project,
+          ...calibratedUpdate,
           splitScenes: [...splitScenes, ...newScenes],
           storyboardStatus: 'editing',
         },

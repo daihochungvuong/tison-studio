@@ -634,7 +634,7 @@ export function DirectorContextPanel() {
   // 没有剧本数据时显示提示
   if (!scriptData) {
     return (
-      <div className="h-full flex flex-col">
+      <div className="h-full min-w-0 flex flex-col overflow-x-hidden">
         <div className="p-3 border-b">
           <h3 className="font-medium text-sm flex items-center gap-2">
             <FileVideo className="h-4 w-4" />
@@ -668,7 +668,7 @@ export function DirectorContextPanel() {
   );
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-w-0 flex flex-col overflow-x-hidden">
       {/* 标题和进度 */}
       <div className="p-3 border-b">
         <div className="flex items-center justify-between">
@@ -773,7 +773,7 @@ export function DirectorContextPanel() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                              className="h-6 w-6 p-0 shrink-0 opacity-0 group-hover:opacity-100"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleAddSceneToSplitScenes(scene);
@@ -786,7 +786,7 @@ export function DirectorContextPanel() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                              className="h-6 w-6 p-0 shrink-0 opacity-0 group-hover:opacity-100"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleSendScene(scene);
@@ -828,7 +828,7 @@ export function DirectorContextPanel() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                                      className="h-6 w-6 p-0 shrink-0 opacity-0 group-hover:opacity-100"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         handleAddShotToSplitScenes(shot, scene);
