@@ -19,17 +19,23 @@ export interface CacheSettings {
   autoCleanEnabled: boolean;
   autoCleanDays: number;
 }
+export interface UpdateSettings {
+  autoCheckEnabled: boolean;
+  ignoredVersion: string;
+}
 
 interface AppSettingsState {
   resourceSharing: ResourceSharingSettings;
   storagePaths: StoragePathSettings;
   cacheSettings: CacheSettings;
+  updateSettings: UpdateSettings;
 }
 
 interface AppSettingsActions {
   setResourceSharing: (settings: Partial<ResourceSharingSettings>) => void;
   setStoragePaths: (paths: Partial<StoragePathSettings>) => void;
   setCacheSettings: (settings: Partial<CacheSettings>) => void;
+  setUpdateSettings: (settings: Partial<UpdateSettings>) => void;
 }
 
 const defaultState: AppSettingsState = {
@@ -44,6 +50,10 @@ const defaultState: AppSettingsState = {
   cacheSettings: {
     autoCleanEnabled: false,
     autoCleanDays: 30,
+  },
+  updateSettings: {
+    autoCheckEnabled: true,
+    ignoredVersion: "",
   },
 };
 
@@ -62,6 +72,10 @@ export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>
       setCacheSettings: (settings) =>
         set((state) => ({
           cacheSettings: { ...state.cacheSettings, ...settings },
+        })),
+      setUpdateSettings: (settings) =>
+        set((state) => ({
+          updateSettings: { ...state.updateSettings, ...settings },
         })),
     }),
     {

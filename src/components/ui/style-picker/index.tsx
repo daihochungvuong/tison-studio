@@ -28,6 +28,7 @@ import {
   type StylePreset,
   type VisualStyleId,
 } from "@/lib/constants/visual-styles";
+import { useCustomStyleStore } from "@/stores/custom-style-store";
 
 // 风格分类对应的背景色（图片已移除，使用色块占位）
 const CATEGORY_COLORS: Record<string, string> = {
@@ -69,7 +70,23 @@ export function StylePicker({
   const [hoveredStyle, setHoveredStyle] = useState<StylePreset | null>(null);
   const [isOpen, setIsOpen] = useState(false);
 
-  // 获取当前选中的风格
+  // 用户自定义风格（用户数据，存储在 localStorage）
+  const customStyles = useCustomStyleStore((s) => s.styles);
+  const customAsPresets: StylePreset[] = useMemo(() =>
+    customStyles.map((s) => ({
+      id: s.id,
+      name: s.name,
+      category: '2d' as const,
+      mediaType: 'animation' as const,
+      prompt: s.prompt || '',
+      negativePrompt: s.negativePrompt || '',
+      description: s.description || '',
+      thumbnail: '',
+    })),
+    [customStyles]
+  );
+
+  // 获取当前选中的风格（内置 + 自定义）
   const selectedStyle = useMemo(() => getStyleById(value), [value]);
 
   // 预览的风格（悬停优先，否则显示选中的）
@@ -110,6 +127,28 @@ export function StylePicker({
               </div>
             </div>
           ))}
+
+          {/* 用户自定义风格（用户个人资产） */}
+          {customAsPresets.length > 0 && (
+            <div className="mb-4">
+              <div className="px-2 py-1.5 text-xs font-medium text-primary border-b border-primary/30 mb-2">
+                我的风格
+              </div>
+              <div className="space-y-1">
+                {customAsPresets.map((style) => (
+                  <StyleItem
+                    key={style.id}
+                    style={style}
+                    isSelected={value === style.id}
+                    isCustom
+                    onSelect={() => handleSelect(style)}
+                    onHover={() => setHoveredStyle(style)}
+                    onLeave={() => setHoveredStyle(null)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </ScrollArea>
 
@@ -154,9 +193,11 @@ export function StylePicker({
                 {selectedStyle && (
                   <span className={cn(
                     "w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold",
-                    CATEGORY_COLORS[selectedStyle.category] || 'bg-muted'
+                    selectedStyle.id.startsWith('custom_style_')
+                      ? 'bg-primary/20 text-primary'
+                      : CATEGORY_COLORS[selectedStyle.category] || 'bg-muted'
                   )}>
-                    {selectedStyle.category === '3d' ? '3D' : selectedStyle.category === '2d' ? '2D' : selectedStyle.category === 'real' ? '真' : '定'}
+                    {selectedStyle.id.startsWith('custom_style_') ? '★' : selectedStyle.category === '3d' ? '3D' : selectedStyle.category === '2d' ? '2D' : selectedStyle.category === 'real' ? '真' : '定'}
                   </span>
                 )}
                 <span className={!selectedStyle ? "text-muted-foreground" : ""}>
@@ -195,12 +236,13 @@ export function StylePicker({
 interface StyleItemProps {
   style: StylePreset;
   isSelected: boolean;
+  isCustom?: boolean;
   onSelect: () => void;
   onHover: () => void;
   onLeave: () => void;
 }
 
-function StyleItem({ style, isSelected, onSelect, onHover, onLeave }: StyleItemProps) {
+function StyleItem({ style, isSelected, isCustom, onSelect, onHover, onLeave }: StyleItemProps) {
   return (
     <button
       className={cn(
@@ -215,9 +257,9 @@ function StyleItem({ style, isSelected, onSelect, onHover, onLeave }: StyleItemP
       {/* 色块占位 */}
       <span className={cn(
         "w-10 h-10 rounded flex items-center justify-center text-[10px] font-bold flex-shrink-0",
-        CATEGORY_COLORS[style.category] || 'bg-muted'
+        isCustom ? 'bg-primary/20 text-primary' : CATEGORY_COLORS[style.category] || 'bg-muted'
       )}>
-        {style.category === '3d' ? '3D' : style.category === '2d' ? '2D' : style.category === 'real' ? '真' : '定'}
+        {isCustom ? '★' : style.category === '3d' ? '3D' : style.category === '2d' ? '2D' : style.category === 'real' ? '真' : '定'}
       </span>
       {/* 名称 */}
       <span className="flex-1 text-left text-sm truncate">{style.name}</span>

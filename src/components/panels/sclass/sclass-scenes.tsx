@@ -93,12 +93,12 @@ import {
   STYLE_CATEGORIES,
   getStyleById, 
   getStylePrompt,
+  getStyleNegativePrompt,
   getMediaType,
   DEFAULT_STYLE_ID 
 } from "@/lib/constants/visual-styles";
 import { getCinematographyProfile, DEFAULT_CINEMATOGRAPHY_PROFILE_ID } from "@/lib/constants/cinematography-profiles";
 import { buildVideoPrompt, buildEmotionDescription as buildEmotionDesc } from "@/lib/generation/prompt-builder";
-import { recalibrateSplitScenes } from "@/lib/script/recalibrate-scenes";
 import { StylePicker } from "@/components/ui/style-picker";
 import { CinematographyProfilePicker } from "@/components/ui/cinematography-profile-picker";
 
@@ -112,7 +112,7 @@ const SceneCard = SClassSceneCard;
 
 export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   // ========== 合并生成（九宫格）本地 UI 状态 ==========
-  const [imageGenMode, setImageGenMode] = useState<'single' | 'merged'>('merged');
+  const [imageGenMode, setImageGenMode] = useState<'single' | 'merged'>('single');
   const [frameMode, setFrameMode] = useState<'first' | 'last' | 'both'>('first');
   const [isMergedRunning, setIsMergedRunning] = useState(false);
   const [refStrategy, setRefStrategy] = useState<'cluster'|'minimal'|'none'>('cluster');
@@ -208,6 +208,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     updateSplitSceneEndFrame,
     updateSplitSceneEndFrameStatus,
     updateSplitSceneCharacters,
+    updateSplitSceneCharacterVariationMap,
     updateSplitSceneEmotions,
     updateSplitSceneShotSize,
     updateSplitSceneDuration,
@@ -222,7 +223,6 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     addAngleSwitchHistory,
     deleteSplitScene,
     resetStoryboard,
-    setSplitScenes,
     // 预告片功能
     clearTrailer,
     // 摄影风格档案
@@ -326,39 +326,15 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     toast.success('摄影风格已更新');
   }, [setCinematographyProfileId]);
 
-  // Update style（事务化：先校准成功再提交风格+分镜）
-  const handleStyleChange = useCallback(async (styleId: string) => {
+  // Update style
+  const handleStyleChange = useCallback((styleId: string) => {
     const style = getStyleById(styleId);
-    if (!style) return;
-
-    const effectiveCalibratedStyleId = storyboardConfig.calibratedStyleId || currentStyleId;
-
-    if (splitScenes.length > 0 && styleId !== effectiveCalibratedStyleId) {
-      const confirmed = window.confirm(
-        '切换风格后，所有分镜的提示词和拍摄参数需要重新校准以匹配新风格。\n已生成的图片和视频不会丢失。\n\n是否继续？'
-      );
-      if (!confirmed) return;
-
-      const toastId = toast.loading('正在用新风格重新校准分镜...');
-      try {
-        const result = await recalibrateSplitScenes(
-          styleId,
-          splitScenes,
-          undefined,
-          (_cur, _total, msg) => toast.loading(msg, { id: toastId }),
-        );
-        setSplitScenes(result.scenes);
-        setStoryboardConfig({ visualStyleId: styleId, styleTokens: [style.prompt], calibratedStyleId: styleId });
-        toast.success(`已切换为 ${style.name} 风格，${result.calibratedCount} 个分镜已重新校准`, { id: toastId });
-      } catch (err) {
-        console.error('[handleStyleChange] 重新校准失败:', err);
-        toast.error(`风格切换失败: ${err instanceof Error ? err.message : '校准出错'}`, { id: toastId });
-      }
-    } else {
-      setStoryboardConfig({ visualStyleId: styleId, styleTokens: [style.prompt], calibratedStyleId: styleId });
+    if (style) {
+      // 直接存储风格 ID，同时保留 styleTokens（完整 prompt）兼容旧逻辑
+      setStoryboardConfig({ visualStyleId: styleId, styleTokens: [style.prompt] });
       toast.success(`已切换为 ${style.name} 风格`);
     }
-  }, [setStoryboardConfig, setSplitScenes, splitScenes, storyboardConfig.calibratedStyleId, currentStyleId]);
+  }, [setStoryboardConfig]);
 
   // Update aspect ratio (S级: 6 种画幅比)
   const SCLASS_ASPECT_RATIOS: { value: SClassAspectRatio; label: string; icon?: string }[] = [
@@ -371,7 +347,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   ];
 
   const handleAspectRatioChange = useCallback((ratio: SClassAspectRatio) => {
-    setStoryboardConfig({ aspectRatio: ratio });
+    setStoryboardConfig({ aspectRatio: ratio as '16:9' | '9:16' });
     toast.success(`画幅比已切换为 ${ratio}`);
   }, [setStoryboardConfig]);
 
@@ -426,7 +402,29 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   // Handle update characters
   const handleUpdateCharacters = useCallback((sceneId: number, characterIds: string[]) => {
     updateSplitSceneCharacters(sceneId, characterIds);
-  }, [updateSplitSceneCharacters]);
+    const currentScene = splitScenes.find((s) => s.id === sceneId);
+    const currentMap = currentScene?.characterVariationMap;
+    if (!currentMap) return;
+
+    const selectedSet = new Set(characterIds);
+    const prunedMap: Record<string, string> = {};
+    Object.entries(currentMap).forEach(([charId, variationId]) => {
+      if (selectedSet.has(charId) && variationId) {
+        prunedMap[charId] = variationId;
+      }
+    });
+
+    const hasChanged =
+      Object.keys(prunedMap).length !== Object.keys(currentMap).length ||
+      Object.entries(prunedMap).some(([charId, variationId]) => currentMap[charId] !== variationId);
+    if (hasChanged) {
+      updateSplitSceneCharacterVariationMap(sceneId, prunedMap);
+    }
+  }, [splitScenes, updateSplitSceneCharacters, updateSplitSceneCharacterVariationMap]);
+
+  const handleUpdateCharacterVariationMap = useCallback((sceneId: number, characterVariationMap: Record<string, string>) => {
+    updateSplitSceneCharacterVariationMap(sceneId, characterVariationMap);
+  }, [updateSplitSceneCharacterVariationMap]);
 
   // Handle update emotions
   const handleUpdateEmotions = useCallback((sceneId: number, emotionTags: EmotionTag[]) => {
@@ -676,28 +674,50 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
   }, []);
 
   // 收集角色参考图片 - 必须在 handleQuadGridGenerate 之前定义
-  const getCharacterReferenceImages = useCallback((characterIds: string[]): string[] => {
+  const getCharacterReferenceImages = useCallback((
+    characterIds: string[],
+    variationMap?: Record<string, string>,
+  ): string[] => {
     const { characters } = useCharacterLibraryStore.getState();
     const refs: string[] = [];
-    
+    const seen = new Set<string>();
+    const MAX_REFS = 14;
+
+    const pushRef = (value?: string) => {
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      refs.push(value);
+    };
+
     for (const charId of characterIds) {
-      const char = characters.find(c => c.id === charId);
-      if (char) {
-        // 取角色的第一张视图图片作为参考
-        const view = char.views[0];
-        if (view) {
-          // 优先使用 base64（持久化），其次使用 URL
-          const imageRef = view.imageBase64 || view.imageUrl;
-          if (imageRef) {
-            refs.push(imageRef);
-          }
-        }
+      const char = characters.find((c) => c.id === charId);
+      if (!char) continue;
+
+      const variationId = variationMap?.[charId];
+      const selectedVariation = variationId
+        ? char.variations?.find((v) => v.id === variationId)
+        : undefined;
+
+      pushRef(selectedVariation?.referenceImage);
+
+      for (const view of char.views || []) {
+        pushRef(view.imageBase64 || view.imageUrl);
+        if (refs.length >= MAX_REFS) return refs;
+      }
+
+      for (const image of char.referenceImages || []) {
+        pushRef(image);
+        if (refs.length >= MAX_REFS) return refs;
+      }
+
+      for (const image of selectedVariation?.clothingReferenceImages || []) {
+        pushRef(image);
+        if (refs.length >= MAX_REFS) return refs;
       }
     }
-    
-    return refs;
-  }, []);
 
+    return refs.slice(0, MAX_REFS);
+  }, []);
   // Handle quad grid click
   const handleQuadGridClick = useCallback((sceneId: number, type: "start" | "end") => {
     const scene = splitScenes.find(s => s.id === sceneId);
@@ -738,7 +758,13 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       return;
     }
     
-    const apiKey = featureConfig.apiKey;
+    const keyManager = featureConfig.keyManager;
+    const apiKey = keyManager.getCurrentKey() || '';
+    if (!apiKey) {
+      toast.error('请先在设置中配置图片生成服务映射');
+      setQuadGridOpen(false);
+      return;
+    }
     const platform = featureConfig.platform;
     const model = featureConfig.models?.[0];
     if (!model) {
@@ -811,7 +837,8 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       const sceneContext = [scene.sceneName, scene.sceneLocation].filter(Boolean).join(' - ');
       const settingContext = sceneContext ? `Setting: ${sceneContext}. ` : '';
 
-      // === 风格键字组（不再注入：校准后的 prompt 已包含风格描述） ===
+      // === 风格键字组 ===
+      const styleStr = styleTokens.length > 0 ? `Artistic style consistent: ${styleTokens.join(', ')}. ` : '';
 
       // Build 2x2 grid prompt
       const gridPromptParts: string[] = [];
@@ -829,6 +856,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       if (settingContext) gridPromptParts.push(settingContext);
       if (actionContext) gridPromptParts.push(actionContext);
       if (moodContext) gridPromptParts.push(moodContext);
+      if (styleStr) gridPromptParts.push(styleStr);
       
       // === 一致性键字组（与 buildAnchorPhrase 一致） ===
       gridPromptParts.push('Keep character appearance, wardrobe and facial features consistent across all 4 panels.');
@@ -842,7 +870,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       const refs: string[] = [sourceImage];
       // 只有在勾选了"参考角色库形象"时，才添加角色参考图
       if (useCharacterRef && scene.characterIds?.length) {
-        refs.push(...getCharacterReferenceImages(scene.characterIds));
+        refs.push(...getCharacterReferenceImages(scene.characterIds, scene.characterVariationMap));
       }
       if (scene.sceneReferenceImage) {
         refs.push(scene.sceneReferenceImage);
@@ -850,7 +878,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
 
       // Process refs for API
       const processedRefs: string[] = [];
-      for (const url of refs.slice(0, 4)) {
+      for (const url of refs.slice(0, 14)) {
         if (!url) continue;
         if (url.startsWith('http://') || url.startsWith('https://')) {
           processedRefs.push(url);
@@ -884,6 +912,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         aspectRatio: aspect,
         resolution: storyboardConfig.resolution || '2K',
         referenceImages: processedRefs.length > 0 ? processedRefs : undefined,
+        keyManager,
       });
 
       let gridImageUrl = apiResult.imageUrl;
@@ -1140,7 +1169,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
           dialogue: s.dialogue,
           // Additional fields for text-based generation
           sceneName: s.sceneName,
-          sceneDescription: s.sceneDescription,
+          sceneDescription: s.sceneLocation,
         })),
         apiKey,
         provider: provider as any,
@@ -1194,7 +1223,12 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       toast.error(getFeatureNotConfiguredMessage('video_generation'));
       return;
     }
-    const apiKey = featureConfig.apiKey;
+    const keyManager = featureConfig.keyManager;
+    const apiKey = keyManager.getCurrentKey() || '';
+    if (!apiKey) {
+      toast.error('请先在设置中配置图片生成服务映射');
+      return;
+    }
     const provider = featureConfig.platform;
 
     // Check if all scenes have prompts
@@ -1483,7 +1517,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
 
       // Collect character reference images
       const characterRefs = scene.characterIds?.length 
-        ? getCharacterReferenceImages(scene.characterIds)
+        ? getCharacterReferenceImages(scene.characterIds, scene.characterVariationMap)
         : [];
 
       updateSplitSceneVideo(sceneId, {
@@ -1678,7 +1712,12 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       return;
     }
     
-    const apiKey = featureConfig.apiKey;
+    const keyManager = featureConfig.keyManager;
+    const apiKey = keyManager.getCurrentKey() || '';
+    if (!apiKey) {
+      toast.error('请先在设置中配置图片生成服务映射');
+      return;
+    }
     const platform = featureConfig.platform;
     const model = featureConfig.models?.[0];
     if (!model) {
@@ -1730,7 +1769,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       
       // 2. 添加角色参考图
       if (scene.characterIds && scene.characterIds.length > 0) {
-        const sceneCharRefs = getCharacterReferenceImages(scene.characterIds);
+        const sceneCharRefs = getCharacterReferenceImages(scene.characterIds, scene.characterVariationMap);
         referenceImages.push(...sceneCharRefs);
       } else if (storyboardConfig.characterReferenceImages && storyboardConfig.characterReferenceImages.length > 0) {
         // Fallback to storyboardConfig characters
@@ -1754,7 +1793,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       // Collect reference images for API
       // Supports: HTTP URLs, base64 Data URI, local-image:// (converted to base64)
       const processedRefs: string[] = [];
-      for (const url of referenceImages.slice(0, 4)) {
+      for (const url of referenceImages.slice(0, 14)) {
         if (!url) continue;
         if (url.startsWith('http://') || url.startsWith('https://')) {
           processedRefs.push(url);
@@ -1779,6 +1818,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         aspectRatio: storyboardConfig.aspectRatio || '9:16',
         resolution: storyboardConfig.resolution || '2K',
         referenceImages: processedRefs.length > 0 ? processedRefs : undefined,
+        keyManager,
       });
 
       // Helper to normalize URL (handle array format) - used in poll responses
@@ -1942,10 +1982,11 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     return result;
   };
 
-  const buildAnchorPhrase = (_styleTokens?: string[]) => {
-    // styleTokens 不再注入（校准后的 prompt 已包含风格描述，避免双重注入）
+  const buildAnchorPhrase = (styleTokens?: string[]) => {
+    const style = styleTokens && styleTokens.length > 0 ? `Artistic style consistent: ${styleTokens.join(', ')}. ` : '';
+    // 强制禁止生成文字，防止出现对话气泡、字幕等
     const noTextConstraint = 'IMPORTANT: NO TEXT, NO WORDS, NO LETTERS, NO CAPTIONS, NO SPEECH BUBBLES, NO DIALOGUE BOXES, NO SUBTITLES, NO WRITING of any kind.';
-    return `Keep character appearance, wardrobe and facial features consistent. Keep lighting and color grading consistent. ${noTextConstraint}`;
+    return `${style}Keep character appearance, wardrobe and facial features consistent. Keep lighting and color grading consistent. ${noTextConstraint}`;
   };
 
   const composeTilePrompt = (scene: SplitScene, angle: Angle, aspect: '16:9'|'9:16', styleTokens?: string[]) => {
@@ -1955,7 +1996,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     // 禁用相机运动与节奏，仅保留视角/景别/构图
     const cameraPart = `${angle}, ${shot}`;
     const anchor = buildAnchorPhrase(styleTokens);
-    // styleTokens 不再末尾追加（校准后的 imagePrompt 已包含风格描述）
+    const style = styleTokens && styleTokens.length > 0 ? ` Style: ${styleTokens.join(', ')}` : '';
     
     // 人物数量约束：根据 characterIds 数量明确指定，防止模型生成多余人物
     const charCount = scene.characterIds?.length || 0;
@@ -1965,7 +2006,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         ? 'EXACTLY ONE person in frame, single character only, do NOT duplicate the character.'
         : `EXACTLY ${charCount} distinct people in frame, no more no less, each person appears only ONCE.`;
     
-    const prompt = `${cameraPart}, ${vertical}${charCountPhrase} ${base}. ${anchor}.`.replace(/\s+/g, ' ').trim();
+    const prompt = `${cameraPart}, ${vertical}${charCountPhrase} ${base}. ${anchor}.${style}`.replace(/\s+/g, ' ').trim();
     return prompt;
   };
 
@@ -1982,7 +2023,12 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       return;
     }
     
-    const apiKey = featureConfig.apiKey;
+    const keyManager = featureConfig.keyManager;
+    const apiKey = keyManager.getCurrentKey() || '';
+    if (!apiKey) {
+      toast.error('请先在设置中配置图片生成服务映射');
+      return;
+    }
     const platform = featureConfig.platform;
     const model = featureConfig.models?.[0];
     if (!model) {
@@ -2003,6 +2049,9 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
 
     const aspect = storyboardConfig.aspectRatio || '9:16';
     const styleTokens = storyboardConfig.styleTokens || [];
+    // 始终使用 getStylePrompt 获取完整风格提示词（保证有默认值，即使 styleTokens 为空）
+    const fullStylePrompt = getStylePrompt(currentStyleId);
+    const fullStyleNegative = getStyleNegativePrompt(currentStyleId);
     const dedup = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
 
     // === 统一任务列表方案：支持混合九宫格 ===
@@ -2061,7 +2110,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         seenScenes.add(task.scene.id);
         if (task.scene.sceneReferenceImage) refs.push(task.scene.sceneReferenceImage);
         if (task.scene.characterIds?.length) {
-          refs.push(...getCharacterReferenceImages(task.scene.characterIds));
+          refs.push(...getCharacterReferenceImages(task.scene.characterIds, task.scene.characterVariationMap));
         }
       }
       // 去重并限制数量（API 限制 14 张）
@@ -2191,7 +2240,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       // 构建增强版提示词 (参考用户提供的结构化 Prompt)
       const gridPromptParts: string[] = [];
       
-      // 1. 核心指令区 (Instruction Block)
+      // 1. 核心指令区 (Instruction Block) — 风格在此处前置，确保全局生效
       gridPromptParts.push('<instruction>');
       gridPromptParts.push(`Generate a clean ${rows}x${cols} storyboard grid with exactly ${paddedCount} equal-sized panels.`);
       gridPromptParts.push(`Overall Image Aspect Ratio: ${aspect}.`);
@@ -2200,8 +2249,13 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       const panelAspect = aspect === '16:9' ? '16:9 (horizontal landscape)' : '9:16 (vertical portrait)';
       gridPromptParts.push(`Each individual panel must have a ${panelAspect} aspect ratio.`);
       
+      // 全局视觉风格（前置到指令区，权重最高）
+      if (fullStylePrompt) {
+        gridPromptParts.push(`MANDATORY Visual Style for ALL panels: ${fullStylePrompt}`);
+      }
+      
       gridPromptParts.push('Structure: No borders between panels, no text, no watermarks, no speech bubbles.');
-      gridPromptParts.push('Consistency: Maintain consistent character appearance, lighting, and color grading across all panels.');
+      gridPromptParts.push('Consistency: Maintain consistent character appearance, lighting, color grading, and visual style across ALL panels.');
       gridPromptParts.push('</instruction>');
       
       // 2. 布局描述 (Layout)
@@ -2229,7 +2283,9 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         
         // 标记是首帧还是尾帧
         const frameLabel = task.type === 'end' ? '[END FRAME]' : '[FIRST FRAME]';
-        gridPromptParts.push(`Panel [row ${row}, col ${col}] ${frameLabel} ${charConstraint}: ${desc}`);
+        // 每格附带风格锚定，防止多面板时模型遗忘全局风格
+        const styleAnchor = fullStylePrompt ? ` [same style]` : '';
+        gridPromptParts.push(`Panel [row ${row}, col ${col}] ${frameLabel} ${charConstraint}: ${desc}${styleAnchor}`);
       });
       
       // 4. 空白占位格描述
@@ -2239,10 +2295,15 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         gridPromptParts.push(`Panel [row ${row}, col ${col}]: empty placeholder, solid gray background`);
       }
       
-      // 5. 全局风格（不再注入：校准后的各 panel prompt 已包含风格描述）
+      // 5. 全局风格（尾部再次强调，首尾夹击确保风格一致性）
+      if (fullStylePrompt) {
+        gridPromptParts.push(`IMPORTANT - Apply this EXACT style uniformly to every panel: ${fullStylePrompt}`);
+      }
       
-      // 6. 负面提示词 (Negative Constraints)
-      gridPromptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy.');
+      // 6. 负面提示词 (Negative Constraints) — 合并风格专属负面提示
+      const baseNegative = 'text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy';
+      const styleNeg = fullStyleNegative ? `, ${fullStyleNegative}` : '';
+      gridPromptParts.push(`Negative constraints: ${baseNegative}${styleNeg}`);
       
       const gridPrompt = gridPromptParts.join('\n'); // 使用换行符分隔更清晰
       console.log('[MergedGen] Grid prompt:', gridPrompt.substring(0, 200) + '...');
@@ -2309,6 +2370,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         aspectRatio: gridAspect,
         resolution: storyboardConfig.resolution || '2K',
         referenceImages: processedRefs.length > 0 ? processedRefs : undefined,
+        keyManager,
       });
       
       let gridImageUrl = apiResult.imageUrl;
@@ -2445,38 +2507,98 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       return slicedImages;
     };
 
-    try {
-      // 统一循环：每页任务可能混合首帧和尾帧
-      for (let p = 0; p < taskPages.length; p++) {
-        if (mergedAbortRef.current) {
-          console.log('[MergedGen] 用户停止合并生成');
-          toast.info('合并生成已停止');
-          return;
+    // 辅助：重置一页中所有任务的状态为 failed
+    const resetPageTasksToError = (pageTasks: GridTask[], errorMsg: string) => {
+      for (const task of pageTasks) {
+        if (task.type === 'end') {
+          updateSplitSceneEndFrameStatus(task.scene.id, { endFrameStatus: 'failed', endFrameProgress: 0, endFrameError: errorMsg });
+        } else {
+          updateSplitSceneImageStatus(task.scene.id, { imageStatus: 'failed', imageProgress: 0, imageError: errorMsg });
         }
-        
-        const pageTasks = taskPages[p];
-        const refs = collectRefsFromTasks(pageTasks);
-        
-        // 统计当前页的首帧/尾帧数量
-        const pageFirstCount = pageTasks.filter(t => t.type === 'first').length;
-        const pageEndCount = pageTasks.filter(t => t.type === 'end').length;
-        const pageInfo = [pageFirstCount > 0 ? `${pageFirstCount}首帧` : '', pageEndCount > 0 ? `${pageEndCount}尾帧` : ''].filter(Boolean).join('+');
-        
-        console.log(`[MergedGen] 第 ${p + 1}/${taskPages.length} 页，${pageTasks.length} 个任务（${pageInfo}），${refs.length} 张参考图`);
-        
+      }
+    };
+
+    // 第一轮：逐页尝试，失败的页面记录下来继续下一页
+    const failedPages: { index: number; pageTasks: GridTask[]; refs: string[]; error: string }[] = [];
+    let succeededCount = 0;
+
+    for (let p = 0; p < taskPages.length; p++) {
+      if (mergedAbortRef.current) {
+        console.log('[MergedGen] 用户停止合并生成');
+        toast.info('合并生成已停止');
+        setIsMergedRunning(false);
+        return;
+      }
+      
+      const pageTasks = taskPages[p];
+      const refs = collectRefsFromTasks(pageTasks);
+      
+      // 统计当前页的首帧/尾帧数量
+      const pageFirstCount = pageTasks.filter(t => t.type === 'first').length;
+      const pageEndCount = pageTasks.filter(t => t.type === 'end').length;
+      const pageInfo = [pageFirstCount > 0 ? `${pageFirstCount}首帧` : '', pageEndCount > 0 ? `${pageEndCount}尾帧` : ''].filter(Boolean).join('+');
+      
+      console.log(`[MergedGen] 第 ${p + 1}/${taskPages.length} 页，${pageTasks.length} 个任务（${pageInfo}），${refs.length} 张参考图`);
+      
+      try {
         await generateGridAndSlice(pageTasks, refs);
+        succeededCount++;
         if (!mergedAbortRef.current) {
           toast.success(`第 ${p + 1}/${taskPages.length} 页完成（${pageInfo}）`);
         }
+      } catch (e: any) {
+        const errorMsg = e.message || String(e);
+        console.error(`[MergedGen] 第 ${p + 1} 页失败:`, errorMsg);
+        // 重置该页分镜状态为 error，不让它们卡在 'generating'
+        resetPageTasksToError(pageTasks, errorMsg);
+        failedPages.push({ index: p, pageTasks, refs, error: errorMsg });
+        toast.warning(`第 ${p + 1}/${taskPages.length} 页失败，将自动重试：${errorMsg.substring(0, 60)}`);
+        // 继续下一页，不中断
       }
-      
-      if (!mergedAbortRef.current) toast.success('九宫格合并生成完成！');
-    } catch (e: any) {
-      console.error('[MergedGen] 失败:', e);
-      toast.error(`合并生成失败: ${e.message || e}`);
-    } finally {
-      setIsMergedRunning(false);
     }
+
+    // 第二轮：自动重试失败的页面（延迟 5 秒后重试，给 API 恢复时间）
+    if (failedPages.length > 0 && !mergedAbortRef.current) {
+      console.log(`[MergedGen] ${failedPages.length} 页失败，5 秒后自动重试...`);
+      toast.info(`${failedPages.length} 页生成失败，5 秒后自动重试...`);
+      await new Promise(r => setTimeout(r, 5000));
+
+      for (const fp of failedPages) {
+        if (mergedAbortRef.current) break;
+
+        const pageFirstCount = fp.pageTasks.filter(t => t.type === 'first').length;
+        const pageEndCount = fp.pageTasks.filter(t => t.type === 'end').length;
+        const pageInfo = [pageFirstCount > 0 ? `${pageFirstCount}首帧` : '', pageEndCount > 0 ? `${pageEndCount}尾帧` : ''].filter(Boolean).join('+');
+
+        console.log(`[MergedGen] 自动重试第 ${fp.index + 1} 页（${pageInfo}）`);
+        try {
+          // 重新收集参考图（可能在其他页成功后有新的图可用）
+          const freshRefs = collectRefsFromTasks(fp.pageTasks);
+          await generateGridAndSlice(fp.pageTasks, freshRefs);
+          succeededCount++;
+          toast.success(`第 ${fp.index + 1} 页重试成功（${pageInfo}）`);
+        } catch (retryErr: any) {
+          const retryMsg = retryErr.message || String(retryErr);
+          console.error(`[MergedGen] 第 ${fp.index + 1} 页重试仍然失败:`, retryMsg);
+          // 再次重置为 error 状态
+          resetPageTasksToError(fp.pageTasks, `重试失败: ${retryMsg}`);
+          toast.error(`第 ${fp.index + 1} 页重试失败: ${retryMsg.substring(0, 80)}`);
+        }
+      }
+    }
+
+    // 最终汇报
+    const totalPages = taskPages.length;
+    if (!mergedAbortRef.current) {
+      if (succeededCount === totalPages) {
+        toast.success('九宫格合并生成全部完成！');
+      } else if (succeededCount > 0) {
+        toast.warning(`合并生成部分完成：${succeededCount}/${totalPages} 页成功，${totalPages - succeededCount} 页失败`);
+      } else {
+        toast.error(`合并生成全部失败（${totalPages} 页），请检查 API 服务后重试`);
+      }
+    }
+    setIsMergedRunning(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splitScenes, storyboardConfig, getApiKey, updateSplitSceneImage, updateSplitSceneImageStatus, updateSplitSceneEndFrame, updateSplitSceneEndFrameStatus]);
 
@@ -2506,7 +2628,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     if (!model) {
       throw new Error('请先在设置中配置图片生成模型');
     }
-    const apiKeyToUse = apiKey || featureConfig.apiKey;
+    const apiKeyToUse = apiKey || featureConfig.keyManager.getCurrentKey() || '';
     if (!apiKeyToUse) {
       throw new Error('请先在设置中配置图片生成服务映射');
     }
@@ -2516,6 +2638,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     }
 
     // Call image generation API with smart routing
+    const mergedKeyManager = featureConfig.keyManager;
     const apiResult = await submitGridImageRequest({
       model,
       prompt,
@@ -2524,6 +2647,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       aspectRatio: aspect,
       resolution: storyboardConfig.resolution || '2K',
       referenceImages: refUrls && refUrls.length > 0 ? refUrls.slice(0, 14) : undefined,
+      keyManager: mergedKeyManager,
     });
 
     const normalizeUrlValue = (url: any): string | undefined => Array.isArray(url) ? (url[0] || undefined) : (typeof url === 'string' ? url : undefined);
@@ -2539,6 +2663,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
           apiKey: apiKeyToUse,
           baseUrl: imageBaseUrl,
           aspectRatio: aspect,
+          keyManager: mergedKeyManager,
         });
         directUrl = retryResult.imageUrl;
         taskId = retryResult.taskId;
@@ -2602,7 +2727,8 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       toast.error('请先在设置中配置图片生成服务映射');
       return;
     }
-    const apiKey = featureConfig.apiKey;
+    const keyManager = featureConfig.keyManager;
+    const apiKey = keyManager.getCurrentKey() || '';
     if (!apiKey) {
       toast.error('请先在设置中配置图片生成服务映射');
       return;
@@ -2658,7 +2784,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       
       // 3. 角色参考图
       if (scene.characterIds && scene.characterIds.length > 0) {
-        const sceneCharRefs = getCharacterReferenceImages(scene.characterIds);
+        const sceneCharRefs = getCharacterReferenceImages(scene.characterIds, scene.characterVariationMap);
         referenceImages.push(...sceneCharRefs);
       }
 
@@ -2670,7 +2796,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
 
       // Process reference images for API
       const processedRefs: string[] = [];
-      for (const url of referenceImages.slice(0, 4)) {
+      for (const url of referenceImages.slice(0, 14)) {
         if (!url) continue;
         if (url.startsWith('http://') || url.startsWith('https://')) {
           processedRefs.push(url);
@@ -2695,6 +2821,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         aspectRatio: storyboardConfig.aspectRatio || '9:16',
         resolution: storyboardConfig.resolution || '2K',
         referenceImages: processedRefs.length > 0 ? processedRefs : undefined,
+        keyManager,
       });
 
       // Helper to normalize URL (handle array format) - used in poll responses
@@ -3050,6 +3177,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
                     onUpdateNeedsEndFrame={(id, needsEndFrame) => updateSplitSceneNeedsEndFrame(id, needsEndFrame)}
                     onUpdateEndFrame={handleUpdateEndFrame}
                     onUpdateCharacters={handleUpdateCharacters}
+                    onUpdateCharacterVariationMap={handleUpdateCharacterVariationMap}
                     onUpdateEmotions={handleUpdateEmotions}
                     onUpdateShotSize={handleUpdateShotSize}
                     onUpdateDuration={handleUpdateDuration}
@@ -3469,6 +3597,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
                     onUpdateNeedsEndFrame={(id, needsEndFrame) => updateSplitSceneNeedsEndFrame(id, needsEndFrame)}
                     onUpdateEndFrame={handleUpdateEndFrame}
                     onUpdateCharacters={handleUpdateCharacters}
+                    onUpdateCharacterVariationMap={handleUpdateCharacterVariationMap}
                     onUpdateEmotions={handleUpdateEmotions}
                     onUpdateShotSize={handleUpdateShotSize}
                     onUpdateDuration={handleUpdateDuration}
@@ -3513,6 +3642,7 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
               onUpdateNeedsEndFrame={(id, needsEndFrame) => updateSplitSceneNeedsEndFrame(id, needsEndFrame)}
               onUpdateEndFrame={handleUpdateEndFrame}
               onUpdateCharacters={handleUpdateCharacters}
+              onUpdateCharacterVariationMap={handleUpdateCharacterVariationMap}
               onUpdateEmotions={handleUpdateEmotions}
               onUpdateShotSize={handleUpdateShotSize}
               onUpdateDuration={handleUpdateDuration}
@@ -3710,3 +3840,4 @@ export function SClassScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     </div>
   );
 }
+

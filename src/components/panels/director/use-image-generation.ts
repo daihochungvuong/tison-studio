@@ -48,22 +48,39 @@ export function getImageApiConfig() {
   return getFeatureConfig('character_generation');
 }
 
-// Collect character reference images
-export function getCharacterReferenceImages(characterIds: string[]): string[] {
+// Collect character reference images (supports wardrobe variation mapping)
+// Fallback chain: variation referenceImage → views[0] → skip
+export function getCharacterReferenceImages(
+  characterIds: string[],
+  variationMap?: Record<string, string>,
+): string[] {
   const { characters } = useCharacterLibraryStore.getState();
   const refs: string[] = [];
   
   for (const charId of characterIds) {
     const char = characters.find(c => c.id === charId);
-    if (char) {
-      const view = char.views[0];
-      if (view) {
-        const imageRef = view.imageBase64 || view.imageUrl;
-        if (imageRef) {
-          refs.push(imageRef);
-        }
+    if (!char) continue;
+
+    // 1. Check variation mapping
+    const varId = variationMap?.[charId];
+    if (varId) {
+      const variation = char.variations?.find(v => v.id === varId);
+      if (variation?.referenceImage) {
+        refs.push(variation.referenceImage);
+        continue;
+      }
+      // Variation not found or has no image → fallback to base
+    }
+
+    // 2. Fallback: base view
+    const view = char.views[0];
+    if (view) {
+      const imageRef = view.imageBase64 || view.imageUrl;
+      if (imageRef) {
+        refs.push(imageRef);
       }
     }
+    // 3. No image at all → skip this character
   }
   
   return refs;
@@ -75,7 +92,8 @@ export async function callImageGenerationApi(
   prompt: string,
   aspectRatio: '16:9' | '9:16',
   referenceImages: string[] = [],
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  signal?: AbortSignal,
 ): Promise<{ imageUrl: string; httpUrl: string }> {
   const featureConfig = getImageApiConfig();
   if (!featureConfig) {
@@ -86,7 +104,7 @@ export async function callImageGenerationApi(
   if (!model) {
     throw new Error('请先在设置中配置图片生成模型');
   }
-  const apiKeyToUse = apiKey || featureConfig.apiKey;
+  const apiKeyToUse = apiKey || featureConfig.keyManager?.getCurrentKey?.() || '';
   if (!apiKeyToUse) {
     throw new Error('请先在设置中配置图片生成服务映射');
   }
@@ -95,6 +113,7 @@ export async function callImageGenerationApi(
     throw new Error('请先在设置中配置图片生成服务映射');
   }
   // Call image generation API with smart routing (auto-selects chat/completions or images/generations)
+  const imageKeyManager = featureConfig.keyManager;
   const apiResult = await submitGridImageRequest({
     model,
     prompt,
@@ -102,6 +121,7 @@ export async function callImageGenerationApi(
     baseUrl: imageBaseUrl,
     aspectRatio,
     referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+    keyManager: imageKeyManager,
   });
 
   // Direct URL result
@@ -120,12 +140,15 @@ export async function callImageGenerationApi(
   if (taskId) {
     const pollInterval = 2000;
     const maxAttempts = 60;
-    
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // 检查外部中止信号
+      if (signal?.aborted) throw new Error('用户已取消');
+
       const progress = Math.min(Math.floor((attempt / maxAttempts) * 100), 99);
       onProgress?.(progress);
 
-      const url = new URL(`${imageBaseUrl}/v1/tasks/${taskId}`);
+      const url = new URL(apiResult.pollUrl || `${imageBaseUrl}/v1/tasks/${taskId}`);
       url.searchParams.set('_ts', Date.now().toString());
 
       const statusResponse = await fetch(url.toString(), {
@@ -134,6 +157,7 @@ export async function callImageGenerationApi(
           'Authorization': `Bearer ${apiKeyToUse}`,
           'Cache-Control': 'no-cache',
         },
+        signal,
       });
 
       if (!statusResponse.ok) {
@@ -170,7 +194,10 @@ export async function callImageGenerationApi(
         throw new Error(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
       }
 
-      await new Promise(r => setTimeout(r, pollInterval));
+      await new Promise<void>((resolve, reject) => {
+        const tid = setTimeout(resolve, pollInterval);
+        signal?.addEventListener('abort', () => { clearTimeout(tid); reject(new Error('用户已取消')); }, { once: true });
+      });
     }
     throw new Error('图片生成超时');
   }

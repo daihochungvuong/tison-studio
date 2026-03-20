@@ -563,15 +563,22 @@ export function generateContactSheetPrompt(config: ContactSheetConfig): ContactS
   const totalCells = gridLayout.rows * gridLayout.cols;
   const paddedCount = totalCells;
   
-  // 构建增强版提示词 (Structured Prompt)
+  // 构建增强版提示词 — 对齐导演面板 generateGridAndSlice 的三层风格夹击结构
   const promptParts: string[] = [];
   
-  // 1. 核心指令区 (Instruction Block)
+  // 1. 核心指令区 (Instruction Block) — 使用与导演面板一致的 storyboard grid 术语
   promptParts.push('<instruction>');
-  promptParts.push(`Generate a clean ${gridLayout.rows}x${gridLayout.cols} architectural concept grid with exactly ${paddedCount} equal-sized panels.`);
-  promptParts.push(`Overall Aspect Ratio: ${aspectRatio}.`);
-  promptParts.push('Structure: No borders between panels, no text, no watermarks.');
-  promptParts.push('Consistency: Maintain consistent perspective, lighting, and style across all panels.');
+  promptParts.push(`Generate a clean ${gridLayout.rows}x${gridLayout.cols} storyboard grid with exactly ${paddedCount} equal-sized panels.`);
+  promptParts.push(`Overall Image Aspect Ratio: ${aspectRatio}.`);
+  // 明确指定单个格子的宽高比，防止 AI 混淆（导演面板核心差异点）
+  const panelAspect = aspectRatio === '16:9' ? '16:9 (horizontal landscape)' : '9:16 (vertical portrait)';
+  promptParts.push(`Each individual panel must have a ${panelAspect} aspect ratio.`);
+  // 全局视觉风格（前置到指令区，权重最高 — 三层夹击第一层）
+  if (styleStr) {
+    promptParts.push(`MANDATORY Visual Style for ALL panels: ${styleStr}`);
+  }
+  promptParts.push('Structure: No borders between panels, no text, no watermarks, no speech bubbles.');
+  promptParts.push('Consistency: Maintain consistent perspective, lighting, color grading, and visual style across ALL panels.');
   promptParts.push('Subject: Interior design and architectural details only, NO people.');
   promptParts.push('</instruction>');
   
@@ -583,12 +590,13 @@ export function generateContactSheetPrompt(config: ContactSheetConfig): ContactS
     promptParts.push(`Scene Context: ${sceneDescEn}`);
   }
   
-  // 4. 每个格子的内容描述
+  // 4. 每个格子的内容描述 — 每格附带 [same style] 锚定（三层夹击第二层）
+  const styleAnchor = styleStr ? ' [same style]' : '';
   viewpoints.forEach((vp, idx) => {
     const row = Math.floor(idx / gridLayout.cols) + 1;
     const col = (idx % gridLayout.cols) + 1;
     
-    promptParts.push(`Panel [row ${row}, col ${col}] (no people): ${vp.nameEn.toUpperCase()}: ${vp.descriptionEn}`);
+    promptParts.push(`Panel [row ${row}, col ${col}] (no people): ${vp.nameEn.toUpperCase()}: ${vp.descriptionEn}${styleAnchor}`);
   });
   
   // 5. 空白占位格描述
@@ -598,9 +606,13 @@ export function generateContactSheetPrompt(config: ContactSheetConfig): ContactS
     promptParts.push(`Panel [row ${row}, col ${col}]: empty placeholder, solid gray background`);
   }
   
-    // 6. 风格与负面提示
-    promptParts.push(`Style: ${styleStr}`);
-    promptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy, people, characters.');
+    // 6. 全局风格尾部再次强调（三层夹击第三层）
+    if (styleStr) {
+      promptParts.push(`IMPORTANT - Apply this EXACT style uniformly to every panel: ${styleStr}`);
+    }
+  
+    // 7. 负面提示词
+    promptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy, people, characters, distorted grid, uneven panels.');
     
     const prompt = promptParts.join('\n');
 
@@ -1064,20 +1076,25 @@ export function generateMultiPageContactSheetData(
     const paddedCount = totalCells;
     const actualCount = pageViewpoints.length;
     
-    // 构建增强版提示词 (Structured Prompt)
+    // 构建增强版提示词 — 对齐导演面板 generateGridAndSlice 的三层风格夹击结构
     const promptParts: string[] = [];
     
-    // 1. 核心指令区 (Instruction Block)
+    // 1. 核心指令区 (Instruction Block) — 使用与导演面板一致的 storyboard grid 术语
     promptParts.push('<instruction>');
-    promptParts.push(`Generate a clean ${gridLayout.rows}x${gridLayout.cols} architectural concept grid with exactly ${paddedCount} equal-sized panels.`);
+    promptParts.push(`Generate a clean ${gridLayout.rows}x${gridLayout.cols} storyboard grid with exactly ${paddedCount} equal-sized panels.`);
     promptParts.push(`Overall Image Aspect Ratio: ${aspectRatio}.`);
     
     // 明确指定单个格子的宽高比，防止 AI 混淆
     const panelAspect = aspectRatio === '16:9' ? '16:9 (horizontal landscape)' : '9:16 (vertical portrait)';
     promptParts.push(`Each individual panel must have a ${panelAspect} aspect ratio.`);
     
-    promptParts.push('Structure: No borders between panels, no text, no watermarks.');
-    promptParts.push('Consistency: Maintain consistent perspective, lighting, and style across all panels.');
+    // 全局视觉风格（前置到指令区，权重最高 — 三层夹击第一层）
+    if (styleStr) {
+      promptParts.push(`MANDATORY Visual Style for ALL panels: ${styleStr}`);
+    }
+    
+    promptParts.push('Structure: No borders between panels, no text, no watermarks, no speech bubbles.');
+    promptParts.push('Consistency: Maintain consistent perspective, lighting, color grading, and visual style across ALL panels.');
     promptParts.push('Subject: Interior design and architectural details only, NO people.');
     promptParts.push('</instruction>');
     
@@ -1089,7 +1106,8 @@ export function generateMultiPageContactSheetData(
       promptParts.push(`Scene Context: ${sceneDescEn}`);
     }
     
-    // 4. 每个格子的内容描述
+    // 4. 每个格子的内容描述 — 每格附带 [same style] 锚定（三层夹击第二层）
+    const styleAnchor = styleStr ? ' [same style]' : '';
     pageViewpoints.forEach((vp, idx) => {
       const row = Math.floor(idx / gridLayout.cols) + 1;
       const col = (idx % gridLayout.cols) + 1;
@@ -1098,7 +1116,7 @@ export function generateMultiPageContactSheetData(
         ? `showing ${vp.keyPropsEn.join(', ')}` 
         : (vp.nameEn === 'Overview' ? 'wide shot showing the entire room layout' : `${vp.nameEn} angle of the room`);
       
-      promptParts.push(`Panel [row ${row}, col ${col}] (no people): ${content}`);
+      promptParts.push(`Panel [row ${row}, col ${col}] (no people): ${content}${styleAnchor}`);
     });
     
     // 5. 空白占位格描述
@@ -1108,9 +1126,13 @@ export function generateMultiPageContactSheetData(
       promptParts.push(`Panel [row ${row}, col ${col}]: empty placeholder, solid gray background`);
     }
     
-    // 6. 风格与负面提示
-    promptParts.push(`Style: ${styleStr}`);
-    promptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy, people, characters.');
+    // 6. 全局风格尾部再次强调（三层夹击第三层）
+    if (styleStr) {
+      promptParts.push(`IMPORTANT - Apply this EXACT style uniformly to every panel: ${styleStr}`);
+    }
+    
+    // 7. 负面提示词
+    promptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy, people, characters, distorted grid, uneven panels.');
     
     const prompt = promptParts.join('\n');
 
@@ -1277,14 +1299,20 @@ export function buildContactSheetDataFromViewpoints(
     const paddedCount = totalCells;
     const actualCount = pageViewpoints.length;
     
-    // 构建英文提示词
+    // 构建英文提示词 — 对齐导演面板三层风格注入
     const promptParts: string[] = [];
     
+    // 计算每格的宽高比描述
+    const panelAspect = aspectRatio === '16:9' ? '16:9 (horizontal landscape)' : '9:16 (vertical portrait)';
+    
     promptParts.push('<instruction>');
-    promptParts.push(`Generate a clean ${gridLayout.rows}x${gridLayout.cols} architectural concept grid with exactly ${paddedCount} equal-sized panels.`);
-    promptParts.push(`Overall Aspect Ratio: ${aspectRatio}.`);
-    promptParts.push('Structure: No borders between panels, no text, no watermarks.');
-    promptParts.push('Consistency: Maintain consistent perspective, lighting, and style across all panels.');
+    promptParts.push(`Generate a clean ${gridLayout.rows}x${gridLayout.cols} storyboard grid with exactly ${paddedCount} equal-sized panels.`);
+    promptParts.push(`Overall Image Aspect Ratio: ${aspectRatio}.`);
+    promptParts.push(`Each individual panel must have a ${panelAspect} aspect ratio.`);
+    // Layer 1: MANDATORY 风格前置（instruction 区内，最高优先级）
+    promptParts.push(`MANDATORY Visual Style for ALL panels: ${styleStr}`);
+    promptParts.push('Structure: No borders between panels, no text, no watermarks, no speech bubbles.');
+    promptParts.push('Consistency: Maintain consistent perspective, lighting, color grading, and visual style across ALL panels.');
     promptParts.push('Subject: Interior design and architectural details only, NO people.');
     promptParts.push('</instruction>');
     
@@ -1299,7 +1327,7 @@ export function buildContactSheetDataFromViewpoints(
       promptParts.push(`Visual Description: ${visualPromptEn}`);
     }
     
-    // 每个格子的内容描述
+    // 每个格子的内容描述 + Layer 2: 每格风格锚定
     pageViewpoints.forEach((vp, idx) => {
       const row = Math.floor(idx / gridLayout.cols) + 1;
       const col = (idx % gridLayout.cols) + 1;
@@ -1308,7 +1336,7 @@ export function buildContactSheetDataFromViewpoints(
         ? `showing ${vp.keyProps.join(', ')}` 
         : (vpNameEn === 'Overview' || vp.name === '全景' ? 'wide shot showing the entire room layout' : `${vpNameEn} angle of the room`);
       
-      promptParts.push(`Panel [row ${row}, col ${col}] (no people): ${content}`);
+      promptParts.push(`Panel [row ${row}, col ${col}] (no people): ${content} [same style]`);
     });
     
     // 空白占位格
@@ -1318,8 +1346,9 @@ export function buildContactSheetDataFromViewpoints(
       promptParts.push(`Panel [row ${row}, col ${col}]: empty placeholder, solid gray background`);
     }
     
-    promptParts.push(`Style: ${styleStr}`);
-    promptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy, people, characters.');
+    // Layer 3: 尾部风格强调（首尾夹击）
+    promptParts.push(`IMPORTANT - Apply this EXACT style uniformly to every panel: ${styleStr}`);
+    promptParts.push('Negative constraints: text, watermark, split screen borders, speech bubbles, blur, distortion, bad anatomy, people, characters, distorted grid, uneven panels.');
     
     const prompt = promptParts.join('\n');
     

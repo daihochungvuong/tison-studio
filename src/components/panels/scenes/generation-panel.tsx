@@ -16,11 +16,12 @@ import {
   ATMOSPHERE_PRESETS,
 } from "@/stores/scene-store";
 import { useMediaPanelStore } from "@/stores/media-panel-store";
-import { useScriptStore } from "@/stores/script-store";
+import { useScriptStore, useActiveScriptProject } from "@/stores/script-store";
+import type { PromptLanguage } from "@/types/script";
 import { useProjectStore } from "@/stores/project-store";
 import { useMediaStore } from "@/stores/media-store";
 import { getFeatureConfig, getFeatureNotConfiguredMessage } from "@/lib/ai/feature-router";
-import { generateSceneImage as generateSceneImageAPI } from "@/lib/ai/image-generator";
+import { generateSceneImage as generateSceneImageAPI, submitGridImageRequest } from "@/lib/ai/image-generator";
 import { generateContactSheetPrompt, generateMultiPageContactSheetData, type SceneViewpoint } from "@/lib/script/scene-viewpoint-generator";
 import type { PendingViewpointData, ContactSheetPromptSet } from "@/stores/media-panel-store";
 import { splitStoryboardImage } from "@/lib/storyboard/image-splitter";
@@ -53,6 +54,8 @@ import {
   Image as ImageIcon,
   Box,
   LayoutGrid,
+  ImagePlus,
+  X,
 } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toast } from "sonner";
@@ -80,7 +83,10 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
     generatingSceneId,
     setGenerationStatus,
     setGeneratingScene,
+    generationPrefs,
+    setGenerationPrefs,
     currentFolderId,
+    setContactSheetTask,
   } = useSceneStore();
 
   const { pendingSceneData, setPendingSceneData } = useMediaPanelStore();
@@ -89,8 +95,12 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
   // 获取当前项目的分镜数据，用于提取场景道具
   const { activeProjectId: scriptProjectId, projects } = useScriptStore();
   const { activeProjectId: resourceProjectId } = useProjectStore();
+  const scriptProject = useActiveScriptProject();
   const currentProject = scriptProjectId ? projects[scriptProjectId] : null;
   const allShots = currentProject?.shots || [];
+
+  // 提示词语言偏好（从剧本设置同步）
+  const [promptLanguage, setPromptLanguage] = useState<PromptLanguage>('zh');
 
   // Form state
   const [name, setName] = useState("");
@@ -101,6 +111,7 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
   const [tags, setTags] = useState<string[]>([]);       // 场景标签
   const [notes, setNotes] = useState("");               // 场景备注
   const [styleId, setStyleId] = useState<string>(DEFAULT_STYLE_ID);
+  const [referenceImages, setReferenceImages] = useState<string[]>([]);
 
   // Preview state
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -108,7 +119,7 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
 
   // Generation mode: single (单图), contact-sheet (联合图/多视角), orthographic (四视图)
   type GenerationMode = 'single' | 'contact-sheet' | 'orthographic';
-  const [generationMode, setGenerationMode] = useState<GenerationMode>('single');
+  const [generationMode, setGenerationMode] = useState<GenerationMode>(generationPrefs.generationMode);
 
   // Contact sheet state
   const [contactSheetPrompt, setContactSheetPrompt] = useState<string | null>(null);
@@ -121,7 +132,7 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
   const [contactSheetProgress, setContactSheetProgress] = useState(0);
   // 联合图布局选项: 2x2(4格), 3x3(9格)
   type ContactSheetLayout = '2x2' | '3x3';
-  const [contactSheetLayout, setContactSheetLayout] = useState<ContactSheetLayout>('3x3');
+  const [contactSheetLayout, setContactSheetLayout] = useState<ContactSheetLayout>(generationPrefs.contactSheetLayout);
 
   // Orthographic (四视图) state
   const [orthographicPrompt, setOrthographicPrompt] = useState<string | null>(null);
@@ -130,7 +141,7 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
   const [isGeneratingOrthographic, setIsGeneratingOrthographic] = useState(false);
   const [orthographicProgress, setOrthographicProgress] = useState(0);
   // 四视图宽高比选择
-  const [orthographicAspectRatio, setOrthographicAspectRatio] = useState<'16:9' | '9:16'>('16:9');
+  const [orthographicAspectRatio, setOrthographicAspectRatio] = useState<'16:9' | '9:16'>(generationPrefs.orthographicAspectRatio);
   // 四视图切割结果
   const [orthographicViews, setOrthographicViews] = useState<{
     front: string | null;
@@ -143,11 +154,66 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
   const [pendingViewpoints, setPendingViewpoints] = useState<PendingViewpointData[]>([]);
   const [pendingContactSheetPrompts, setPendingContactSheetPrompts] = useState<ContactSheetPromptSet[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [contactSheetAspectRatio, setContactSheetAspectRatio] = useState<'16:9' | '9:16'>('16:9');
+  const [contactSheetAspectRatio, setContactSheetAspectRatio] = useState<'16:9' | '9:16'>(generationPrefs.contactSheetAspectRatio);
   // 批量四视图状态
   const [savedChildSceneIds, setSavedChildSceneIds] = useState<string[]>([]); // 刚保存的子场景 ID
 
   const isGenerating = generationStatus === 'generating';
+
+  // Keep local UI state in sync with persisted preferences (project switch / rehydrate)
+  useEffect(() => {
+    setGenerationMode(generationPrefs.generationMode);
+    setContactSheetLayout(generationPrefs.contactSheetLayout);
+    setContactSheetAspectRatio(generationPrefs.contactSheetAspectRatio);
+    setOrthographicAspectRatio(generationPrefs.orthographicAspectRatio);
+  }, [
+    generationPrefs.generationMode,
+    generationPrefs.contactSheetLayout,
+    generationPrefs.contactSheetAspectRatio,
+    generationPrefs.orthographicAspectRatio,
+  ]);
+
+  // Persist key mode/layout/aspect preferences to avoid panel-switch state loss
+  useEffect(() => {
+    setGenerationPrefs({
+      generationMode,
+      contactSheetLayout,
+      contactSheetAspectRatio,
+      orthographicAspectRatio,
+    });
+  }, [
+    generationMode,
+    contactSheetLayout,
+    contactSheetAspectRatio,
+    orthographicAspectRatio,
+    setGenerationPrefs,
+  ]);
+
+  // Reference image handlers
+  const handleRefImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const newImages: string[] = [];
+    for (const file of Array.from(files)) {
+      if (referenceImages.length + newImages.length >= 3) break;
+      try {
+        const base64 = await fileToBase64(file);
+        newImages.push(base64);
+      } catch (err) {
+        console.error("Failed to convert image:", err);
+      }
+    }
+
+    if (newImages.length > 0) {
+      setReferenceImages([...referenceImages, ...newImages].slice(0, 3));
+    }
+    e.target.value = "";
+  };
+
+  const removeRefImage = (index: number) => {
+    setReferenceImages(referenceImages.filter((_, i) => i !== index));
+  };
 
   // Fill form when scene selected
   useEffect(() => {
@@ -171,6 +237,13 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
     // 立即捕获数据并清除，防止 React 严格模式下重复执行
     const data = pendingSceneData;
     setPendingSceneData(null);
+    
+    // 同步提示词语言偏好
+    if (data.promptLanguage) {
+      setPromptLanguage(data.promptLanguage);
+    } else if (scriptProject?.promptLanguage) {
+      setPromptLanguage(scriptProject.promptLanguage);
+    }
     
     // 如果有名称和地点，自动创建新场景
     if (data.name && data.location) {
@@ -214,13 +287,15 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
         styleId: parsedStyleId,
         folderId: currentFolderId,
         projectId: resourceProjectId || undefined,
-        // 专业场景设计字段
+      // 专业场景设计字段
         architectureStyle: data.architectureStyle,
         lightingDesign: data.lightingDesign,
         colorPalette: data.colorPalette,
         eraDetails: data.eraDetails,
         keyProps: data.keyProps,
         spatialLayout: data.spatialLayout,
+        // 集作用域
+        linkedEpisodeId: data.sourceEpisodeId,
       } as any);
 
       // 选中新创建的场景
@@ -251,8 +326,8 @@ export function GenerationPanel({ selectedScene, onSceneCreated }: GenerationPan
             setContactSheetLayout('3x3');
           }
           
-          // 根据宽高比设置方向 (仅作参考)
-          if (cols > rows) {
+          // 根据宽高比设置方向：正方形网格（3x3, 2x2）默认横屏
+          if (cols >= rows) {
              setContactSheetAspectRatio('16:9');
           } else {
              setContactSheetAspectRatio('9:16');
@@ -510,6 +585,14 @@ ${gridItemsZh}
       return;
     }
 
+    // 获取当前集作用域
+    const { activeEpisodeIndex } = useMediaPanelStore.getState();
+    const scriptState = useScriptStore.getState();
+    const activeScriptProject = scriptState.activeProjectId ? scriptState.projects[scriptState.activeProjectId] : null;
+    const manualEpisodeId = activeEpisodeIndex != null
+      ? activeScriptProject?.scriptData?.episodes.find(ep => ep.index === activeEpisodeIndex)?.id
+      : undefined;
+
     const id = addScene({
       name: name.trim(),
       location: location.trim(),
@@ -521,6 +604,7 @@ ${gridItemsZh}
       styleId,
       folderId: currentFolderId,
       projectId: resourceProjectId || undefined,
+      linkedEpisodeId: manualEpisodeId,
     });
 
     toast.success("场景已创建");
@@ -589,6 +673,7 @@ ${gridItemsZh}
         prompt,
         negativePrompt,
         aspectRatio: '16:9',
+        referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
         styleId,
       });
 
@@ -756,6 +841,7 @@ ${gridItemsZh}
 
   /**
    * 直接生成联合图（调用内部 AI 图片生成 API）
+   * 使用 submitGridImageRequest 对齐导演面板，确保网格格式正确
    */
   const handleGenerateContactSheetImage = async () => {
     if (!contactSheetPrompt) {
@@ -769,29 +855,95 @@ ${gridItemsZh}
       return;
     }
 
+    const apiKey = featureConfig.apiKey;
+    const baseUrl = featureConfig.baseUrl?.replace(/\/+$/, '') || '';
+    const model = featureConfig.models?.[0] || '';
+    const keyManager = featureConfig.keyManager;
+
+    if (!apiKey || !baseUrl || !model) {
+      toast.error('图片生成 API 未配置');
+      return;
+    }
+
     setIsGeneratingContactSheet(true);
     setContactSheetProgress(0);
 
     try {
-      // 使用英文提示词生成
       const stylePreset = getStyleById(styleId);
       const isRealistic = stylePreset?.category === 'real';
-      // 加强负面提示词，明确禁止所有类型的文字
       const negativePrompt = isRealistic
         ? 'blurry, low quality, watermark, text, labels, titles, captions, words, letters, numbers, annotations, subtitles, typography, font, writing, people, characters, anime, cartoon, distorted grid, uneven panels'
         : 'blurry, low quality, watermark, text, labels, titles, captions, words, letters, numbers, annotations, subtitles, typography, font, writing, people, characters, distorted grid, uneven panels';
 
+      // 增强提示词：如果用户编辑的是中文提示词，在前面包裹英文结构化网格指令
+      let finalPrompt = contactSheetPrompt;
+      const isChinese = /[\u4e00-\u9fa5]/.test(finalPrompt) && !finalPrompt.includes('<instruction>');
+      if (isChinese) {
+        const layoutDims = (() => {
+          switch (contactSheetLayout) {
+            case '2x2': return { rows: 2, cols: 2 };
+            case '3x3': return { rows: 3, cols: 3 };
+            default: return { rows: 3, cols: 3 };
+          }
+        })();
+        const totalCells = layoutDims.rows * layoutDims.cols;
+        const panelAspect = contactSheetAspectRatio === '16:9' ? '16:9 (horizontal landscape)' : '9:16 (vertical portrait)';
+        const styleTokens = stylePreset?.prompt || '';
+        
+        finalPrompt = [
+          '<instruction>',
+          `Generate a clean ${layoutDims.rows}x${layoutDims.cols} storyboard grid with exactly ${totalCells} equal-sized panels.`,
+          `Overall Image Aspect Ratio: ${contactSheetAspectRatio}.`,
+          `Each individual panel must have a ${panelAspect} aspect ratio.`,
+          styleTokens ? `MANDATORY Visual Style for ALL panels: ${styleTokens}` : '',
+          'Structure: No borders between panels, no text, no watermarks, no speech bubbles.',
+          'Consistency: Maintain consistent perspective, lighting, color grading, and visual style across ALL panels.',
+          '</instruction>',
+          '',
+          contactSheetPrompt,
+          '',
+          `Negative constraints: ${negativePrompt}`,
+        ].filter(Boolean).join('\n');
+      } else if (!finalPrompt.includes('Negative constraints:')) {
+        finalPrompt += `\nNegative constraints: ${negativePrompt}`;
+      }
+
       setContactSheetProgress(20);
 
-      const result = await generateSceneImageAPI({
-        prompt: contactSheetPrompt,
-        negativePrompt,
-        aspectRatio: contactSheetAspectRatio, // 根据用户选择的宽高比
-        styleId,
+      const result = await submitGridImageRequest({
+        model,
+        prompt: finalPrompt,
+        apiKey,
+        baseUrl,
+        aspectRatio: contactSheetAspectRatio,
+        resolution: '2K',
+        keyManager,
       });
 
       setContactSheetProgress(100);
-      setContactSheetImage(result.imageUrl);
+      if (!result.imageUrl) {
+        throw new Error('图片生成失败：未返回图片 URL');
+      }
+      
+      // 如果返回的是 HTTP URL，转为 base64 — 避免后续切割时 CORS 问题
+      let finalImageUrl = result.imageUrl;
+      if (finalImageUrl.startsWith('http://') || finalImageUrl.startsWith('https://')) {
+        try {
+          const resp = await fetch(finalImageUrl);
+          const blob = await resp.blob();
+          finalImageUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          console.log('[ContactSheet] HTTP→base64 转换成功');
+        } catch (e) {
+          console.warn('[ContactSheet] HTTP→base64 转换失败，使用原URL');
+        }
+      }
+      
+      setContactSheetImage(finalImageUrl);
       toast.success("联合图生成成功，可以进行切割");
     } catch (error) {
       const err = error as Error;
@@ -998,7 +1150,26 @@ ${gridItemsZh}
       
       const expectedCount = expectedRows * expectedCols;
       
-      const splitResults = await splitStoryboardImage(contactSheetImage, {
+      // 如果图片是 HTTP URL，先转为 base64 避免 CORS 导致 canvas 被污染
+      let imageForSplit = contactSheetImage;
+      if (contactSheetImage.startsWith('http://') || contactSheetImage.startsWith('https://')) {
+        console.log('[Split] HTTP URL 检测到，转换为 base64...');
+        try {
+          const resp = await fetch(contactSheetImage);
+          const blob = await resp.blob();
+          imageForSplit = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          console.log('[Split] HTTP→base64 转换成功');
+        } catch (convertErr) {
+          console.warn('[Split] HTTP→base64 转换失败，使用原URL:', convertErr);
+        }
+      }
+      
+      const splitResults = await splitStoryboardImage(imageForSplit, {
         aspectRatio: contactSheetAspectRatio,
         resolution: '2K',
         sceneCount: expectedCount,
@@ -1274,6 +1445,455 @@ ${gridItemsZh}
     setContactSheetImage(null);
     setSplitViewpointImages({});
     setExtractedViewpoints([]);
+  };
+
+  /**
+   * 一键自动流水线：生成联合图 → 切割 → 保存子场景
+   * 任务在后台运行，用户可以继续设置下一个生成任务
+   */
+  const handleAutoGenerateContactSheet = async () => {
+    if (!contactSheetPrompt) {
+      toast.error("请先生成提示词");
+      return;
+    }
+
+    const featureConfig = getFeatureConfig('character_generation');
+    if (!featureConfig) {
+      toast.error(getFeatureNotConfiguredMessage('character_generation'));
+      return;
+    }
+
+    // 快照当前所有必要的状态（确保后台运行时不受 UI 状态变化影响）
+    const snapshotPrompt = contactSheetPrompt;
+    const snapshotStyleId = styleId;
+    const snapshotAspectRatio = contactSheetAspectRatio;
+    const snapshotLayout = contactSheetLayout;
+    const snapshotViewpoints = [...(pendingViewpoints.length > 0 ? pendingViewpoints.filter(v => v.pageIndex === currentPageIndex) : extractedViewpoints)];
+    const snapshotAllPendingViewpoints = [...pendingViewpoints];
+    const snapshotCurrentPageIndex = currentPageIndex;
+    const snapshotPendingPrompts = [...pendingContactSheetPrompts];
+
+    console.log('[AutoContactSheet] 快照状态:', {
+      promptLength: contactSheetPrompt?.length,
+      aspectRatio: snapshotAspectRatio,
+      layout: snapshotLayout,
+      viewpointsCount: snapshotViewpoints.length,
+      pendingViewpointsTotal: pendingViewpoints.length,
+      extractedViewpointsCount: extractedViewpoints.length,
+      currentPageIndex,
+    });
+
+    const snapshotName = name.trim() || selectedScene?.name || '未命名场景';
+    const snapshotLocation = location.trim() || selectedScene?.location || snapshotName;
+    const snapshotTime = time || selectedScene?.time || 'day';
+    const snapshotAtmosphere = atmosphere || selectedScene?.atmosphere || 'peaceful';
+    const snapshotVisualPrompt = visualPrompt || selectedScene?.visualPrompt;
+    const snapshotTags = [...tags];
+    const snapshotNotes = notes;
+    const snapshotFolderId = currentFolderId;
+    const snapshotProjectId = resourceProjectId;
+
+    // 立即创建或复用父场景
+    let parentSceneId: string;
+    if (selectedScene) {
+      parentSceneId = selectedScene.id;
+    } else {
+      parentSceneId = addScene({
+        name: snapshotName,
+        location: snapshotLocation,
+        time: snapshotTime,
+        atmosphere: snapshotAtmosphere,
+        styleId: snapshotStyleId || DEFAULT_STYLE_ID,
+        folderId: snapshotFolderId,
+        projectId: snapshotProjectId ?? undefined,
+        visualPrompt: snapshotVisualPrompt,
+        tags: snapshotTags.length > 0 ? snapshotTags : undefined,
+        notes: snapshotNotes?.trim() || undefined,
+      });
+      selectScene(parentSceneId);
+      onSceneCreated?.(parentSceneId);
+    }
+
+    // 设置生成中状态 — 中间栏会显示 spinner
+    setContactSheetTask(parentSceneId, { status: 'generating', progress: 10, message: '正在生成联合图...' });
+    toast.info(`场景「${snapshotName}」联合图开始生成...`);
+
+    // 立即清空左栏状态，允许用户设置下一个任务
+    setContactSheetPrompt(null);
+    setContactSheetPromptZh(null);
+    setContactSheetImage(null);
+    setSplitViewpointImages({});
+    setIsGeneratingContactSheet(false);
+
+    // 后台异步执行整个流水线
+    (async () => {
+      try {
+        // ==================== 阶段 1: 生成联合图 ====================
+        // 获取 API 配置 — 与导演面板一致使用 submitGridImageRequest
+        const autoFeatureConfig = getFeatureConfig('character_generation');
+        if (!autoFeatureConfig) {
+          throw new Error(getFeatureNotConfiguredMessage('character_generation'));
+        }
+        const apiKey = autoFeatureConfig.apiKey;
+        const baseUrl = autoFeatureConfig.baseUrl?.replace(/\/+$/, '') || '';
+        const model = autoFeatureConfig.models?.[0] || '';
+        const keyManager = autoFeatureConfig.keyManager;
+
+        if (!apiKey || !baseUrl || !model) {
+          throw new Error('图片生成 API 未配置');
+        }
+
+        // 负面提示词 — 增加 distorted grid / uneven panels
+        const stylePreset = getStyleById(snapshotStyleId);
+        const isRealistic = stylePreset?.category === 'real';
+        const negativePrompt = isRealistic
+          ? 'blurry, low quality, watermark, text, labels, titles, captions, words, letters, numbers, annotations, subtitles, typography, font, writing, people, characters, anime, cartoon, distorted grid, uneven panels'
+          : 'blurry, low quality, watermark, text, labels, titles, captions, words, letters, numbers, annotations, subtitles, typography, font, writing, people, characters, distorted grid, uneven panels';
+
+        // 增强提示词：如果用户编辑的是中文提示词，在前面包裹英文结构化网格指令
+        let finalPrompt = snapshotPrompt;
+        const isChinese = /[\u4e00-\u9fa5]/.test(finalPrompt) && !finalPrompt.includes('<instruction>');
+        if (isChinese) {
+          // 用户提供了中文提示词但没有结构化指令 → 包裹英文 grid 指令
+          const currentPagePromptForLayout = snapshotPendingPrompts[snapshotCurrentPageIndex];
+          const layoutForPrompt = currentPagePromptForLayout?.gridLayout || 
+            (() => {
+              switch (snapshotLayout) {
+                case '2x2': return { rows: 2, cols: 2 };
+                case '3x3': return { rows: 3, cols: 3 };
+                default: return { rows: 3, cols: 3 };
+              }
+            })();
+          const totalCells = layoutForPrompt.rows * layoutForPrompt.cols;
+          const panelAspect = snapshotAspectRatio === '16:9' ? '16:9 (horizontal landscape)' : '9:16 (vertical portrait)';
+          const styleTokens = stylePreset?.prompt || '';
+          
+          finalPrompt = [
+            '<instruction>',
+            `Generate a clean ${layoutForPrompt.rows}x${layoutForPrompt.cols} storyboard grid with exactly ${totalCells} equal-sized panels.`,
+            `Overall Image Aspect Ratio: ${snapshotAspectRatio}.`,
+            `Each individual panel must have a ${panelAspect} aspect ratio.`,
+            styleTokens ? `MANDATORY Visual Style for ALL panels: ${styleTokens}` : '',
+            'Structure: No borders between panels, no text, no watermarks, no speech bubbles.',
+            'Consistency: Maintain consistent perspective, lighting, color grading, and visual style across ALL panels.',
+            '</instruction>',
+            '',
+            snapshotPrompt,
+            '',
+            `Negative constraints: ${negativePrompt}`,
+          ].filter(Boolean).join('\n');
+        } else {
+          // 已有英文结构化提示词，追加负面提示词
+          if (!finalPrompt.includes('Negative constraints:')) {
+            finalPrompt += `\nNegative constraints: ${negativePrompt}`;
+          }
+        }
+
+        setContactSheetTask(parentSceneId, { status: 'generating', progress: 30, message: '正在调用 AI 生成...' });
+
+        // 使用 submitGridImageRequest — 与导演面板保持一致
+        const result = await submitGridImageRequest({
+          model,
+          prompt: finalPrompt,
+          apiKey,
+          baseUrl,
+          aspectRatio: snapshotAspectRatio,
+          resolution: '2K',
+          keyManager,
+        });
+
+        const generatedImageUrl = result.imageUrl;
+        if (!generatedImageUrl) {
+          throw new Error('图片生成失败：未返回图片 URL');
+        }
+
+        console.log('[AutoContactSheet] 阶段1完成，图片URL类型:', 
+          generatedImageUrl.startsWith('data:') ? 'base64' : 'HTTP URL',
+          '长度:', generatedImageUrl.length
+        );
+
+        // ==================== 阶段 2: 切割 ====================
+        setContactSheetTask(parentSceneId, { status: 'splitting', progress: 60, message: '正在切割视角...' });
+
+        const currentPagePrompt = snapshotPendingPrompts[snapshotCurrentPageIndex];
+        let expectedRows: number, expectedCols: number;
+        if (currentPagePrompt?.gridLayout) {
+          expectedRows = currentPagePrompt.gridLayout.rows;
+          expectedCols = currentPagePrompt.gridLayout.cols;
+        } else {
+          const layoutDims = (() => {
+            switch (snapshotLayout) {
+              case '2x2': return { rows: 2, cols: 2 };
+              case '3x3': return { rows: 3, cols: 3 };
+              default: return { rows: 3, cols: 3 };
+            }
+          })();
+          expectedRows = layoutDims.rows;
+          expectedCols = layoutDims.cols;
+        }
+        const expectedCount = expectedRows * expectedCols;
+
+        // 如果图片是 HTTP URL，先转为 base64 避免 CORS 导致 canvas 被污染
+        let imageForSplit = generatedImageUrl;
+        if (generatedImageUrl.startsWith('http://') || generatedImageUrl.startsWith('https://')) {
+          console.log('[AutoContactSheet] HTTP URL 检测到，转换为 base64...');
+          try {
+            const resp = await fetch(generatedImageUrl);
+            const blob = await resp.blob();
+            imageForSplit = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            console.log('[AutoContactSheet] HTTP→base64 转换成功，长度:', imageForSplit.length);
+          } catch (convertErr) {
+            console.warn('[AutoContactSheet] HTTP→base64 转换失败，使用原URL:', convertErr);
+          }
+        }
+
+        console.log('[AutoContactSheet] 切割参数:', { expectedRows, expectedCols, expectedCount, aspectRatio: snapshotAspectRatio });
+
+        const splitResults = await splitStoryboardImage(imageForSplit, {
+          aspectRatio: snapshotAspectRatio,
+          resolution: '2K',
+          sceneCount: expectedCount,
+          options: {
+            expectedRows,
+            expectedCols,
+            filterEmpty: false,
+            edgeMarginPercent: 0.02,
+          },
+        });
+
+        console.log('[AutoContactSheet] 切割完成，结果数量:', splitResults.length);
+
+        // 如果 snapshotViewpoints 为空（用户手动编辑提示词，未走视角生成流程），
+        // 自动生成 fallback 视角以匹配切割结果
+        let effectiveViewpoints = snapshotViewpoints;
+        if (effectiveViewpoints.length === 0 && splitResults.length > 0) {
+          console.log('[AutoContactSheet] 视角为空，自动生成 fallback 视角，数量:', splitResults.length);
+          effectiveViewpoints = splitResults.map((sr, idx) => ({
+            id: `auto-vp-${idx}-${Date.now()}`,
+            name: `视角-${idx + 1}`,
+            nameEn: `Viewpoint-${idx + 1}`,
+            shotIds: [] as string[],
+            shotIndexes: [] as number[],
+            keyProps: [] as string[],
+            keyPropsEn: [] as string[],
+            gridIndex: idx,
+            pageIndex: 0,
+          }));
+        }
+
+        console.log('[AutoContactSheet] 有效视角数量:', effectiveViewpoints.length);
+        // 调试：输出每个视角的 gridIndex
+        effectiveViewpoints.forEach((vp, i) => {
+          console.log(`[AutoContactSheet] 视角[${i}]: id=${vp.id}, name=${vp.name}, gridIndex=${vp.gridIndex}`);
+        });
+
+        // 将切割结果映射到视角 — 双重映射策略：优先直接索引，回退到 row/col 查找
+        const viewpointImagesMap: Record<string, { imageUrl: string; gridIndex: number }> = {};
+        for (const vp of effectiveViewpoints) {
+          const gridIdx = vp.gridIndex;
+          // 策略 1: 直接索引 — splitResults 按行优先排列，gridIndex 直接对应
+          let splitResult = (gridIdx >= 0 && gridIdx < splitResults.length) ? splitResults[gridIdx] : undefined;
+          // 验证：直接索引的 row/col 应该 = gridIndex 整除和取模
+          if (splitResult) {
+            const expectRow = Math.floor(gridIdx / expectedCols);
+            const expectCol = gridIdx % expectedCols;
+            if (splitResult.row !== expectRow || splitResult.col !== expectCol) {
+              console.warn(`[AutoContactSheet] 直接索引不匹配: gridIndex=${gridIdx}, split[row=${splitResult.row},col=${splitResult.col}] vs expected[row=${expectRow},col=${expectCol}]`);
+              splitResult = undefined; // 不匹配，回退到查找
+            }
+          }
+          // 策略 2: row/col 查找
+          if (!splitResult) {
+            const row = Math.floor(gridIdx / expectedCols);
+            const col = gridIdx % expectedCols;
+            splitResult = splitResults.find(sr => sr.row === row && sr.col === col);
+          }
+          if (splitResult) {
+            viewpointImagesMap[vp.id] = { imageUrl: splitResult.dataUrl, gridIndex: vp.gridIndex };
+          } else {
+            console.warn(`[AutoContactSheet] 视角 ${vp.name}(gridIndex=${gridIdx}) 未找到对应切割结果`);
+          }
+        }
+
+        const mappedCount = Object.keys(viewpointImagesMap).length;
+        console.log('[AutoContactSheet] 映射结果数量:', mappedCount, '/', effectiveViewpoints.length);
+
+        // ===== 安全回退：如果映射全部失败但切割有结果，直接使用切割结果创建子场景 =====
+        if (mappedCount === 0 && splitResults.length > 0) {
+          console.warn('[AutoContactSheet] ⚠ 映射全部失败！启用安全回退：直接使用切割结果创建子场景');
+          // 重建 effectiveViewpoints 和 viewpointImagesMap
+          effectiveViewpoints = splitResults.map((sr, idx) => ({
+            id: `fallback-vp-${idx}-${Date.now()}`,
+            name: `视角-${idx + 1}`,
+            nameEn: `Viewpoint-${idx + 1}`,
+            shotIds: [] as string[],
+            shotIndexes: [] as number[],
+            keyProps: [] as string[],
+            keyPropsEn: [] as string[],
+            gridIndex: idx,
+            pageIndex: 0,
+          }));
+          effectiveViewpoints.forEach((vp, idx) => {
+            viewpointImagesMap[vp.id] = { imageUrl: splitResults[idx].dataUrl, gridIndex: idx };
+          });
+          console.log('[AutoContactSheet] 回退后映射数量:', Object.keys(viewpointImagesMap).length);
+        }
+
+        // ==================== 阶段 3: 保存子场景 ====================
+        setContactSheetTask(parentSceneId, { status: 'saving', progress: 80, message: '正在保存视角...' });
+
+        const { scenes: currentScenes } = useSceneStore.getState();
+        const parentScene = currentScenes.find(s => s.id === parentSceneId);
+        if (!parentScene) {
+          throw new Error('父场景已被删除');
+        }
+        const parentSceneName = parentScene.name || parentScene.location;
+        const targetFolderId = parentScene.folderId;
+        const createdVariantIds: string[] = [];
+
+        // 补全分镜 shotIds — 使用 effectiveViewpoints（含 fallback）
+        let viewpointsToSave = effectiveViewpoints.map((vp) => ({
+          ...vp,
+          shotIds: [...(vp.shotIds || [])],
+        }));
+
+        const sceneShots = allShots.filter(shot => {
+          const scriptScenes = currentProject?.scriptData?.scenes || [];
+          const matchedScene = scriptScenes.find(s => 
+            s.name === parentSceneName || s.location === parentSceneName ||
+            (s.name && parentSceneName.includes(s.name)) || (s.location && parentSceneName.includes(s.location))
+          );
+          return matchedScene && shot.sceneRefId === matchedScene.id;
+        });
+
+        if (sceneShots.length > 0) {
+          const assignedShotIds = new Set(viewpointsToSave.flatMap(vp => vp.shotIds || []));
+          const unassignedShots = sceneShots.filter(shot => !assignedShotIds.has(shot.id));
+          for (const shot of unassignedShots) {
+            const shotIndexInScene = sceneShots.findIndex(s => s.id === shot.id);
+            const vpIndex = shotIndexInScene % viewpointsToSave.length;
+            viewpointsToSave[vpIndex].shotIds.push(shot.id);
+          }
+        }
+
+        console.log('[AutoContactSheet] 阶段3: 准备保存子场景, viewpointsToSave:', viewpointsToSave.length, 'viewpointImagesMap条目:', Object.keys(viewpointImagesMap).length);
+
+        for (const vp of viewpointsToSave) {
+          const imgData = viewpointImagesMap[vp.id];
+          if (!imgData) {
+            console.warn(`[AutoContactSheet] 跳过视角 ${vp.name}: viewpointImagesMap 中无对应数据 (id=${vp.id})`);
+            continue;
+          }
+
+          const variantName = `${parentSceneName}-${vp.name}`;
+          const safeName = variantName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_');
+          const localPath = await saveImageToLocal(
+            imgData.imageUrl,
+            'scenes',
+            `${safeName}_${Date.now()}.png`
+          );
+
+          const variantId = addScene({
+            name: variantName,
+            location: parentScene.location,
+            time: parentScene.time || 'day',
+            atmosphere: parentScene.atmosphere || 'peaceful',
+            visualPrompt: parentScene.visualPrompt,
+            referenceImage: localPath,
+            styleId: parentScene.styleId || snapshotStyleId,
+            folderId: targetFolderId,
+            projectId: parentScene.projectId ?? snapshotProjectId ?? undefined,
+            tags: parentScene.tags,
+            parentSceneId: parentScene.id,
+            viewpointId: vp.id,
+            viewpointName: vp.name,
+            shotIds: vp.shotIds,
+            isViewpointVariant: true,
+          } as any);
+          createdVariantIds.push(variantId);
+
+          const aiFolder = getOrCreateCategoryFolder('ai-image');
+          addMediaFromUrl({
+            url: localPath,
+            name: `场景-${variantName}`,
+            type: 'image',
+            source: 'ai-image',
+            folderId: aiFolder,
+            projectId: parentScene.projectId ?? snapshotProjectId ?? undefined,
+          });
+        }
+
+        // 保存联合图到父场景（同时兼容 base64 和 imageForSplit 已转换过的）
+        let localContactSheet: string | null = imageForSplit || generatedImageUrl;
+        const imageToSave = imageForSplit || generatedImageUrl;
+        if (imageToSave && (imageToSave.startsWith('data:') || imageToSave.startsWith('http'))) {
+          const csPath = await saveImageToLocal(
+            imageToSave,
+            'scenes',
+            `contact-sheet-${parentScene.id}_${Date.now()}.png`
+          );
+          if (csPath.startsWith('local-image://')) {
+            localContactSheet = csPath;
+            const csAiFolder = getOrCreateCategoryFolder('ai-image');
+            addMediaFromUrl({
+              url: csPath,
+              name: `联合图-${parentSceneName}`,
+              type: 'image',
+              source: 'ai-image',
+              folderId: csAiFolder,
+              projectId: parentScene.projectId ?? snapshotProjectId ?? undefined,
+            });
+          }
+        }
+
+        const viewpointsData = viewpointsToSave.map(vp => ({
+          id: vp.id,
+          name: vp.name,
+          nameEn: vp.nameEn,
+          shotIds: vp.shotIds,
+          keyProps: vp.keyProps,
+          gridIndex: vp.gridIndex,
+        }));
+        updateScene(parentScene.id, {
+          contactSheetImage: localContactSheet,
+          viewpoints: viewpointsData,
+        } as any);
+
+        // ==================== 完成 ====================
+        console.log('[AutoContactSheet] ✅ 流水线完成:', {
+          parentSceneId,
+          childScenesCreated: createdVariantIds.length,
+          splitResultsCount: splitResults.length,
+          viewpointsMapped: Object.keys(viewpointImagesMap).length,
+        });
+        setContactSheetTask(parentSceneId, { status: 'done', progress: 100, message: `完成，已创建 ${createdVariantIds.length} 个子场景` });
+        if (createdVariantIds.length > 0) {
+          toast.success(`场景「${parentSceneName}」联合图已切割保存，共 ${createdVariantIds.length} 个视角子场景（点击展开查看）`);
+        } else {
+          toast.warning(`场景「${parentSceneName}」联合图已保存，但未能创建子场景（切割结果: ${splitResults.length} 个）`);
+        }
+
+        // 3秒后清除完成状态
+        setTimeout(() => {
+          setContactSheetTask(parentSceneId, null);
+        }, 3000);
+
+      } catch (error) {
+        const err = error as Error;
+        console.error('[AutoContactSheet] 自动流水线失败:', err);
+        setContactSheetTask(parentSceneId, { status: 'error', progress: 0, message: err.message });
+        toast.error(`场景联合图自动生成失败: ${err.message}`);
+        // 10秒后清除错误状态
+        setTimeout(() => {
+          setContactSheetTask(parentSceneId, null);
+        }, 10000);
+      }
+    })();
   };
 
   /**
@@ -2005,49 +2625,49 @@ ${anchor} 的背面直视镜头。展示后部结构。背景是物体面向的�
               </div>
             )}
 
-            {/* 提示词（可展开） */}
-            <details className="group">
+            {/* 提示词（默认展开，可编辑，根据语言偏好只显示一种） */}
+            <details className="group" open>
               <summary className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
                 <span className="group-open:rotate-90 transition-transform">▶</span>
-                查看提示词（可复制）
+                四视图提示词（可编辑，修改后直接用于生成）
               </summary>
               <div className="mt-2 space-y-2">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">英文提示词</Label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-2 text-xs"
-                      onClick={() => handleCopyOrthographicPrompt(true)}
-                    >
-                      <Copy className="h-3 w-3 mr-1" />复制
-                    </Button>
-                  </div>
-                  <Textarea
-                    value={orthographicPrompt}
-                    readOnly
-                    className="min-h-[80px] text-xs resize-none bg-muted/50"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">中文提示词</Label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-2 text-xs"
-                      onClick={() => handleCopyOrthographicPrompt(false)}
-                    >
-                      <Copy className="h-3 w-3 mr-1" />复制
-                    </Button>
-                  </div>
-                  <Textarea
-                    value={orthographicPromptZh || ''}
-                    readOnly
-                    className="min-h-[80px] text-xs resize-none bg-muted/50"
-                  />
-                </div>
+                {(() => {
+                  const effectiveLang = promptLanguage || scriptProject?.promptLanguage || 'zh';
+                  const isZh = effectiveLang === 'zh' || effectiveLang === 'zh+en';
+                  const langLabel = isZh ? '中文' : 'English';
+                  const currentValue = isZh
+                    ? (orthographicPromptZh || orthographicPrompt || '')
+                    : (orthographicPrompt || orthographicPromptZh || '');
+                  return (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">生成提示词（{langLabel}，修改后直接用于生成）</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-2 text-xs"
+                          onClick={() => handleCopyOrthographicPrompt(isZh ? false : true)}
+                        >
+                          <Copy className="h-3 w-3 mr-1" />复制
+                        </Button>
+                      </div>
+                      <Textarea
+                        value={currentValue}
+                        onChange={(e) => {
+                          if (isZh) {
+                            setOrthographicPromptZh(e.target.value);
+                            // 同步更新实际发送的提示词
+                            setOrthographicPrompt(e.target.value);
+                          } else {
+                            setOrthographicPrompt(e.target.value);
+                          }
+                        }}
+                        className="min-h-[200px] text-xs resize-y"
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             </details>
 
@@ -2281,11 +2901,11 @@ ${anchor} 的背面直视镜头。展示后部结构。背景是物体面向的�
               </div>
             </div>
 
-            {/* 生成联合图按钮 */}
+            {/* 一键生成联合图（自动生成→切割→保存） */}
             {!contactSheetImage && (
               <div className="space-y-2">
                 <Button 
-                  onClick={handleGenerateContactSheetImage} 
+                  onClick={handleAutoGenerateContactSheet} 
                   className="w-full"
                   disabled={isGeneratingContactSheet}
                 >
@@ -2297,7 +2917,7 @@ ${anchor} 的背面直视镜头。展示后部结构。背景是物体面向的�
                   ) : (
                     <>
                       <Grid3X3 className="h-4 w-4 mr-2" />
-                      生成联合图
+                      生成联合图（自动切割并保存）
                     </>
                   )}
                 </Button>
@@ -2322,49 +2942,49 @@ ${anchor} 的背面直视镜头。展示后部结构。背景是物体面向的�
               </div>
             )}
 
-            {/* 提示词（可展开查看） */}
-            <details className="group">
+            {/* 提示词（默认展开，可编辑，根据语言偏好只显示一种） */}
+            <details className="group" open>
               <summary className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
                 <span className="group-open:rotate-90 transition-transform">▶</span>
-                查看提示词（可复制用于测试）
+                联合图提示词（可编辑，修改后直接用于生成）
               </summary>
               <div className="mt-2 space-y-2">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">英文提示词</Label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-2 text-xs"
-                      onClick={() => handleCopyPrompt(true)}
-                    >
-                      <Copy className="h-3 w-3 mr-1" />复制
-                    </Button>
-                  </div>
-                  <Textarea
-                    value={contactSheetPrompt}
-                    readOnly
-                    className="min-h-[80px] text-xs resize-none bg-muted/50"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">中文提示词</Label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-2 text-xs"
-                      onClick={() => handleCopyPrompt(false)}
-                    >
-                      <Copy className="h-3 w-3 mr-1" />复制
-                    </Button>
-                  </div>
-                  <Textarea
-                    value={contactSheetPromptZh || ''}
-                    readOnly
-                    className="min-h-[80px] text-xs resize-none bg-muted/50"
-                  />
-                </div>
+                {(() => {
+                  const effectiveLang = promptLanguage || scriptProject?.promptLanguage || 'zh';
+                  const isZh = effectiveLang === 'zh' || effectiveLang === 'zh+en';
+                  const langLabel = isZh ? '中文' : 'English';
+                  const currentValue = isZh
+                    ? (contactSheetPromptZh || contactSheetPrompt || '')
+                    : (contactSheetPrompt || contactSheetPromptZh || '');
+                  return (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">生成提示词（{langLabel}，修改后直接用于生成）</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-2 text-xs"
+                          onClick={() => handleCopyPrompt(isZh ? false : true)}
+                        >
+                          <Copy className="h-3 w-3 mr-1" />复制
+                        </Button>
+                      </div>
+                      <Textarea
+                        value={currentValue}
+                        onChange={(e) => {
+                          if (isZh) {
+                            setContactSheetPromptZh(e.target.value);
+                            // 同步更新实际发送的提示词
+                            setContactSheetPrompt(e.target.value);
+                          } else {
+                            setContactSheetPrompt(e.target.value);
+                          }
+                        }}
+                        className="min-h-[200px] text-xs resize-y"
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             </details>
 
@@ -2453,7 +3073,7 @@ ${anchor} 的背面直视镜头。展示后部结构。背景是物体面向的�
 
         <div className="p-3 border-t">
           <p className="text-xs text-muted-foreground text-center">
-            💡 生成联合图后切割，每个视角可用于对应分镜的背景
+            💡 点击「生成联合图」后自动完成切割和保存，可连续发起多个任务
           </p>
         </div>
       </div>
@@ -2583,6 +3203,54 @@ ${anchor} 的背面直视镜头。展示后部结构。背景是物体面向的�
               onChange={(id) => setStyleId(id)}
               disabled={isGenerating}
             />
+          </div>
+
+          {/* Reference images */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">参考图片</Label>
+              <span className="text-xs text-muted-foreground">{referenceImages.length}/3</span>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {referenceImages.map((img, i) => (
+                <div key={i} className="relative group">
+                  <img
+                    src={img}
+                    alt={`参考图 ${i + 1}`}
+                    className="w-14 h-14 object-cover rounded-md border"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeRefImage(i)}
+                    className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              {referenceImages.length < 3 && (
+                <>
+                  <input
+                    id="scene-gen-ref-image"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleRefImageChange}
+                  />
+                  <div
+                    className="w-14 h-14 border-2 border-dashed rounded-md flex flex-col items-center justify-center text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors gap-1 cursor-pointer"
+                    onClick={() => document.getElementById('scene-gen-ref-image')?.click()}
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                    <span className="text-[10px]">上传</span>
+                  </div>
+                </>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              AI 将参考这些图片生成场景概念图
+            </p>
           </div>
         </div>
       </ScrollArea>
@@ -2815,6 +3483,15 @@ function extractPropsFromActions(actions: string): string[] {
   }
   
   return props.slice(0, 8); // 最多返回 8 个道具
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 // Note: generateSceneImage is now imported from @/lib/ai/image-generator

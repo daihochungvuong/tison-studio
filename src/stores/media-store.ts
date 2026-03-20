@@ -127,19 +127,23 @@ export const getImageDimensions = (
   return new Promise((resolve, reject) => {
     const img = new window.Image();
 
+    const objectUrl = URL.createObjectURL(file);
+
     img.addEventListener("load", () => {
       const width = img.naturalWidth;
       const height = img.naturalHeight;
       resolve({ width, height });
       img.remove();
+      URL.revokeObjectURL(objectUrl);
     });
 
     img.addEventListener("error", () => {
       reject(new Error("Could not load image"));
       img.remove();
+      URL.revokeObjectURL(objectUrl);
     });
 
-    img.src = URL.createObjectURL(file);
+    img.src = objectUrl;
   });
 };
 
@@ -165,6 +169,8 @@ export const generateVideoThumbnail = (
       video.currentTime = Math.min(1, video.duration * 0.1);
     });
 
+    const objectUrl = URL.createObjectURL(file);
+
     video.addEventListener("seeked", () => {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const thumbnailUrl = canvas.toDataURL("image/jpeg", 0.8);
@@ -173,18 +179,19 @@ export const generateVideoThumbnail = (
 
       resolve({ thumbnailUrl, width, height });
 
-      // Cleanup
       video.remove();
       canvas.remove();
+      URL.revokeObjectURL(objectUrl);
     });
 
     video.addEventListener("error", () => {
       reject(new Error("Could not load video"));
       video.remove();
       canvas.remove();
+      URL.revokeObjectURL(objectUrl);
     });
 
-    video.src = URL.createObjectURL(file);
+    video.src = objectUrl;
     video.load();
   });
 };
@@ -196,17 +203,21 @@ export const getMediaDuration = (file: File): Promise<number> => {
       file.type.startsWith("video/") ? "video" : "audio"
     ) as HTMLVideoElement;
 
+    const objectUrl = URL.createObjectURL(file);
+
     element.addEventListener("loadedmetadata", () => {
       resolve(element.duration);
       element.remove();
+      URL.revokeObjectURL(objectUrl);
     });
 
     element.addEventListener("error", () => {
       reject(new Error("Could not load media"));
       element.remove();
+      URL.revokeObjectURL(objectUrl);
     });
 
-    element.src = URL.createObjectURL(file);
+    element.src = objectUrl;
     element.load();
   });
 };
@@ -367,8 +378,10 @@ export const useMediaStore = create<MediaStore>()(
   clearProjectMedia: async (projectId) => {
     const state = get();
 
-    // Cleanup all object URLs
-    state.mediaFiles.forEach((item) => {
+    const projectFiles = state.mediaFiles.filter((item) => item.projectId === projectId);
+    const otherFiles = state.mediaFiles.filter((item) => item.projectId !== projectId);
+
+    projectFiles.forEach((item) => {
       if (item.url) {
         URL.revokeObjectURL(item.url);
       }
@@ -377,12 +390,10 @@ export const useMediaStore = create<MediaStore>()(
       }
     });
 
-    // Clear local state
-    set({ mediaFiles: [] });
+    set({ mediaFiles: otherFiles });
 
-    // Clear persistent storage
     try {
-      const mediaIds = state.mediaFiles.map((item) => item.id);
+      const mediaIds = projectFiles.map((item) => item.id);
       await Promise.all(
         mediaIds.map((id) => storageService.deleteMediaFile({ projectId, id }))
       );

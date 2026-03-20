@@ -366,13 +366,8 @@ export class AIWorkerBridge {
         width: metadata.width,
         height: metadata.height,
         folderId: videoFolderId,
-        // AI metadata
-        aiMetadata: {
-          origin: 'ai',
-          screenplayId,
-          sceneId,
-          generatedAt: Date.now(),
-        },
+        source: 'ai-video',
+        projectId,
       });
       
       // 3. Update director store

@@ -115,7 +115,7 @@ export const T2I_MODELS: T2IModel[] = [
   {
     id: 'nano-banana',
     name: 'Nano Banana',
-    providerAliases: ["nano-banana","gemini-imagen"],
+    providerAliases: ["nano-banana","gemini-imagen","gemini-2.5-flash-image","gemini-2.5-flash-image-preview"],
     inputs: {
       prompt: promptInput(),
       aspect_ratio: aspectRatioInput([
@@ -262,7 +262,7 @@ export const T2I_MODELS: T2IModel[] = [
   // 13
   {
     id: 'midjourney-v7-text-to-image',
-    providerAliases: ["midjourney-v7-text-to-image","midjourney-v7","mj_imagine"],
+    providerAliases: ["midjourney-v7-text-to-image","midjourney-v7","mj_imagine","midjourney","niji-6"],
     name: 'Midjourney V7 Text to Image',
     category: 'premium',
     inputs: {
@@ -351,7 +351,7 @@ export const T2I_MODELS: T2IModel[] = [
   // 18
   {
     id: 'ideogram-v3-t2i',
-    providerAliases: ["ideogram-v3-t2i","ideogram-v3","ideogram_generate_V_3_DEFAULT","ideogram_generate_V_3_QUALITY","ideogram_generate_V_3_TURBO"],
+    providerAliases: ["ideogram-v3-t2i","ideogram-v3","ideogram_generate_V_3_DEFAULT","ideogram_generate_V_3_QUALITY","ideogram_generate_V_3_TURBO","ideogram_generate_V_1","ideogram_generate_V_1_TURBO","ideogram_generate_V_2","ideogram_generate_V_2_TURBO"],
     name: 'Ideogram V3 T2I',
     inputs: {
       prompt: promptInput(),
@@ -418,7 +418,7 @@ export const T2I_MODELS: T2IModel[] = [
   // 23
   {
     id: 'bytedance-seedream-v4',
-    providerAliases: ["bytedance-seedream-v4","doubao-seedream-4-5-251128","doubao-seedream-4-0-250828"],
+    providerAliases: ["bytedance-seedream-v4","doubao-seedream-4-0-250828"],
     name: 'ByteDance SeDream V4',
     inputs: {
       prompt: promptInput(),
@@ -594,7 +594,7 @@ export const T2I_MODELS: T2IModel[] = [
   // 37
   {
     id: 'kling-o1-text-to-image',
-    providerAliases: ["kling-o1-text-to-image","kling-o1-image","kling-image","kling-omni-image"],
+    providerAliases: ["kling-o1-text-to-image","kling-o1-image","kling-image","kling-omni-image","kling-image-v1","kling-image-v1-5","kling-image-v2","kling-image-v2-new","kling-image-v2-1"],
     name: 'Kling O1 Text to Image',
     inputs: {
       prompt: promptInput(),
@@ -687,7 +687,7 @@ export const T2I_MODELS: T2IModel[] = [
   // 44
   {
     id: 'gpt-image-1.5',
-    providerAliases: ["gpt-image-1.5","gpt-image-1","gpt-image-1.5-all"],
+    providerAliases: ["gpt-image-1.5","gpt-image-1","gpt-image-1.5-all","gpt-image-1-all","gpt-image-1-mini"],
     name: 'GPT Image 1.5',
     category: 'premium',
     inputs: {
@@ -779,7 +779,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 1
   {
     id: 'seedance-lite-t2v',
-    providerAliases: ["seedance-lite-t2v","doubao-seedance-lite","doubao-seedance-1-0-lite-t2v-250428"],
+    providerAliases: ["seedance-lite-t2v","doubao-seedance-lite","doubao-seedance-1-0-lite-t2v-250428","doubao-seedance-1-0-lite-i2v-250428"],
     name: 'Seedance Lite T2V',
     inputs: {
       prompt: promptInput(),
@@ -793,7 +793,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 2
   {
     id: 'seedance-pro-t2v',
-    providerAliases: ["seedance-pro-t2v","doubao-seedance-1-5-pro","doubao-seedance-1-5-pro-251215","doubao-seedance-1-0-pro-250528"],
+    providerAliases: ["seedance-pro-t2v","doubao-seedance-1-5-pro","doubao-seedance-1-0-pro-250528"],
     name: 'Seedance Pro T2V',
     category: 'premium',
     inputs: {
@@ -853,7 +853,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 6
   {
     id: 'kling-v2.1-master-t2v',
-    providerAliases: ["kling-v2.1-master-t2v","kling-v2-1-master","kling-video"],
+    providerAliases: ["kling-v2.1-master-t2v","kling-v2-1-master"],
     name: 'Kling V2.1 Master T2V',
     category: 'premium',
     inputs: {
@@ -865,7 +865,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 7
   {
     id: 'kling-v2.5-turbo-pro-t2v',
-    providerAliases: ["kling-v2.5-turbo-pro-t2v","kling-v2-5-turbo-pro","kling-video"],
+    providerAliases: ["kling-v2.5-turbo-pro-t2v","kling-v2-5-turbo-pro"],
     name: 'Kling V2.5 Turbo Pro T2V',
     inputs: {
       prompt: promptInput(),
@@ -876,7 +876,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 8
   {
     id: 'kling-v2.6-pro-t2v',
-    providerAliases: ["kling-v2.6-pro-t2v","kling-v2-6-pro","kling-video"],
+    providerAliases: ["kling-v2.6-pro-t2v","kling-v2-6-pro","kling-video","kling-video-extend","kling-motion-control","kling-multi-elements","kling-avatar-image2video","kling-advanced-lip-sync","kling-effects","kling-v1","kling-v1-5","kling-v1-6","kling-v2-master","kling-v2-1","kling-v2-5-turbo","kling-v2-6"],
     name: 'Kling V2.6 Pro T2V',
     category: 'premium',
     inputs: {
@@ -923,7 +923,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 12
   {
     id: 'veo3-text-to-video',
-    providerAliases: ["veo3-text-to-video","veo3","veo3-pro"],
+    providerAliases: ["veo3-text-to-video","veo3","veo3-pro","veo3-frames","veo3-fast-frames","veo3-pro-frames"],
     name: 'Veo 3 Text to Video',
     category: 'premium',
     inputs: {
@@ -945,7 +945,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 14
   {
     id: 'veo3.1-text-to-video',
-    providerAliases: ["veo3.1-text-to-video","veo3.1","veo3.1-pro","veo3.1-4k","veo3.1-pro-4k","veo_3_1","veo_3_1-4K"],
+    providerAliases: ["veo3.1-text-to-video","veo3.1","veo3.1-pro","veo3.1-4k","veo3.1-pro-4k","veo_3_1","veo_3_1-4K","veo3.1-components","veo3.1-fast-components","veo3.1-components-4k","veo_3_1-components","veo_3_1-components-4K","veo_3_1-fast-components-4K"],
     name: 'Veo 3.1 Text to Video',
     category: 'latest',
     inputs: {
@@ -966,6 +966,16 @@ export const T2V_MODELS: T2VModel[] = [
       aspect_ratio: aspectRatioInput(['16:9', '9:16']),
       duration: durationInput({ enum: [8] }),
       resolution: resolutionInput(['1080p']),
+    },
+  },
+  // 15.5 (Veo 2)
+  {
+    id: 'veo2-text-to-video',
+    providerAliases: ["veo2-text-to-video","veo2","veo2-fast","veo2-fast-frames","veo2-fast-components","veo2-pro","veo2-pro-components"],
+    name: 'Veo 2 Text to Video',
+    inputs: {
+      prompt: promptInput(),
+      aspect_ratio: aspectRatioInput(['16:9', '9:16']),
     },
   },
   // 16
@@ -1134,7 +1144,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 28
   {
     id: 'minimax-hailuo-02-standard-t2v',
-    providerAliases: ["minimax-hailuo-02-standard-t2v","hailuo-02-standard","minimax-video-01","MiniMax-Hailuo-02","aigc-video-hailuo"],
+    providerAliases: ["minimax-hailuo-02-standard-t2v","hailuo-02-standard","MiniMax-Hailuo-02","aigc-video-hailuo"],
     name: 'MiniMax Hailuo 02 Standard T2V',
     inputs: {
       prompt: promptInput(),
@@ -1145,7 +1155,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 29
   {
     id: 'minimax-hailuo-02-pro-t2v',
-    providerAliases: ["minimax-hailuo-02-pro-t2v","hailuo-02-pro","MiniMax-Hailuo-02"],
+    providerAliases: ["minimax-hailuo-02-pro-t2v","hailuo-02-pro"],
     name: 'MiniMax Hailuo 02 Pro T2V',
     category: 'premium',
     inputs: {
@@ -1157,7 +1167,7 @@ export const T2V_MODELS: T2VModel[] = [
   // 30
   {
     id: 'minimax-hailuo-2.3-pro-t2v',
-    providerAliases: ["minimax-hailuo-2.3-pro-t2v","hailuo-2-3-pro","MiniMax-Hailuo-2.3"],
+    providerAliases: ["minimax-hailuo-2.3-pro-t2v","hailuo-2-3-pro"],
     name: 'MiniMax Hailuo 2.3 Pro T2V',
     category: 'premium',
     inputs: {
@@ -1237,14 +1247,14 @@ export const T2V_MODELS: T2VModel[] = [
   // 37
   {
     id: 'grok-imagine-text-to-video',
-    providerAliases: ["grok-imagine-text-to-video","grok-video-3","grok-video-3-10s"],
+    providerAliases: ["grok-imagine-text-to-video","grok-video-3","grok-video-3-10s","grok-video-3-15s"],
     name: 'Grok Imagine Text to Video',
     inputs: {
       prompt: promptInput(),
       aspect_ratio: aspectRatioInput([
         '9:16', '16:9', '2:3', '3:2', '1:1',
       ]),
-      duration: durationInput({ enum: [6, 10] }),
+      duration: durationInput({ enum: [6, 10, 15] }),
     },
   },
   // 38
@@ -1278,6 +1288,27 @@ export const T2V_MODELS: T2VModel[] = [
       aspect_ratio: aspectRatioInput(['16:9', '9:16']),
       duration: durationInput({ default: 5 }),
       resolution: resolutionInput(['480p', '720p', '1080p']),
+    },
+  },
+  // 41
+  {
+    id: 'luma-text-to-video',
+    providerAliases: ["luma-text-to-video","luma_video_api","luma_video_extend_api","luma-video","luma-video-ray2","luma-video-ray2-flash"],
+    name: 'Luma Text to Video',
+    inputs: {
+      prompt: promptInput(),
+      aspect_ratio: aspectRatioInput(['16:9', '9:16', '1:1']),
+    },
+  },
+  // 42
+  {
+    id: 'minimax-video-01',
+    providerAliases: ["minimax-video-01","minimax/video-01","minimax/video-01-live"],
+    name: 'MiniMax Video-01',
+    inputs: {
+      prompt: promptInput(),
+      duration: durationInput({ enum: [6, 10] }),
+      resolution: resolutionInput(['768P']),
     },
   },
 ];

@@ -45,15 +45,15 @@ export type GenerationStatus = 'idle' | 'uploading' | 'generating' | 'completed'
 // Alias for backward compatibility
 export type VideoStatus = GenerationStatus;
 
-// ==================== 预设常量（从 director-presets.ts 导入并重新导出） ====================
-// 本地导入：用于本文件内的类型引用（SplitScene 等接口定义需要）
+// ==================== 棰勮甯搁噺锛堜粠 director-presets.ts 瀵煎叆骞堕噸鏂板鍑猴級 ====================
+// 鏈湴瀵煎叆锛氱敤浜庢湰鏂囦欢鍐呯殑绫诲瀷寮曠敤锛圫plitScene 绛夋帴鍙ｅ畾涔夐渶瑕侊級
 import type {
   ShotSizeType,
   DurationType,
   SoundEffectTag,
   EmotionTag,
 } from './director-presets';
-// 重新导出：保持向后兼容，现有的 import { SHOT_SIZE_PRESETS } from '@/stores/director-store' 继续可用
+// 閲嶆柊瀵煎嚭锛氫繚鎸佸悜鍚庡吋瀹癸紝鐜版湁鐨?import { SHOT_SIZE_PRESETS } from '@/stores/director-store' 缁х画鍙敤
 export {
   SHOT_SIZE_PRESETS,
   type ShotSizeType,
@@ -85,105 +85,107 @@ export {
   type SpecialTechniqueType,
 } from './director-presets';
 
-// 分镜（原名 Split scene）
-// 三层提示词设计：
-// 1. 首帧提示词 (imagePrompt) - 静态画面描述，用于生成首帧图片
-// 2. 尾帧提示词 (endFramePrompt) - 静态画面描述，用于生成尾帧图片（如果需要）
-// 3. 视频提示词 (videoPrompt) - 动态动作描述，用于生成视频
+// 鍒嗛暅锛堝師鍚?Split scene锛?
+// 涓夊眰鎻愮ず璇嶈璁★細
+// 1. 棣栧抚鎻愮ず璇?(imagePrompt) - 闈欐€佺敾闈㈡弿杩帮紝鐢ㄤ簬鐢熸垚棣栧抚鍥剧墖
+// 2. 灏惧抚鎻愮ず璇?(endFramePrompt) - 闈欐€佺敾闈㈡弿杩帮紝鐢ㄤ簬鐢熸垚灏惧抚鍥剧墖锛堝鏋滈渶瑕侊級
+// 3. 瑙嗛鎻愮ず璇?(videoPrompt) - 鍔ㄦ€佸姩浣滄弿杩帮紝鐢ㄤ簬鐢熸垚瑙嗛
 export interface SplitScene {
   id: number;
-  // 场景名称（如：山村学校）
+  // 鍦烘櫙鍚嶇О锛堝锛氬北鏉戝鏍★級
   sceneName: string;
-  // 场景地点（如：教室内部）
+  // 鍦烘櫙鍦扮偣锛堝锛氭暀瀹ゅ唴閮級
   sceneLocation: string;
   
-  // ========== 首帧 (First Frame / Start State) ==========
-  // 首帧图片（从分镜图切割得到，或 AI 生成）
+  // ========== 棣栧抚 (First Frame / Start State) ==========
+  // 棣栧抚鍥剧墖锛堜粠鍒嗛暅鍥惧垏鍓插緱鍒帮紝鎴?AI 鐢熸垚锛?
   imageDataUrl: string;
-  // 首帧图片的 HTTP URL（用于视频生成 API）
+  // 棣栧抚鍥剧墖鐨?HTTP URL锛堢敤浜庤棰戠敓鎴?API锛?
   imageHttpUrl: string | null;
   width: number;
   height: number;
-  // 首帧图像提示词（英文，用于图像生成 API）
-  // 重点：构图、光影、人物外观、起始姿势（静态描述）
+  // 棣栧抚鍥惧儚鎻愮ず璇嶏紙鑻辨枃锛岀敤浜庡浘鍍忕敓鎴?API锛?
+  // 閲嶇偣锛氭瀯鍥俱€佸厜褰便€佷汉鐗╁瑙傘€佽捣濮嬪Э鍔匡紙闈欐€佹弿杩帮級
   imagePrompt: string;
-  // 首帧图像提示词（中文，用于用户显示/编辑）
+  // 棣栧抚鍥惧儚鎻愮ず璇嶏紙涓枃锛岀敤浜庣敤鎴锋樉绀?缂栬緫锛?
   imagePromptZh: string;
-  // 首帧生成状态
+  // 棣栧抚鐢熸垚鐘舵€?
   imageStatus: GenerationStatus;
   imageProgress: number; // 0-100
   imageError: string | null;
   
-  // ========== 尾帧 (End Frame / End State) ==========
-  // 是否需要尾帧（AI 自动判断或用户手动设置）
-  // 需要尾帧的场景：大幅位移、变身、镜头大幅转移、转场镜头、风格化视频
-  // 不需要尾帧的场景：简单对话、微动作、开放式场景
+  // ========== 灏惧抚 (End Frame / End State) ==========
+  // 鏄惁闇€瑕佸熬甯э紙AI 鑷姩鍒ゆ柇鎴栫敤鎴锋墜鍔ㄨ缃級
+  // 闇€瑕佸熬甯х殑鍦烘櫙锛氬ぇ骞呬綅绉汇€佸彉韬€侀暅澶村ぇ骞呰浆绉汇€佽浆鍦洪暅澶淬€侀鏍煎寲瑙嗛
+  // 涓嶉渶瑕佸熬甯х殑鍦烘櫙锛氱畝鍗曞璇濄€佸井鍔ㄤ綔銆佸紑鏀惧紡鍦烘櫙
   needsEndFrame: boolean;
-  // 尾帧图片 URL (data URL 或本地路径)
+  // 灏惧抚鍥剧墖 URL (data URL 鎴栨湰鍦拌矾寰?
   endFrameImageUrl: string | null;
-  // 尾帧图片的 HTTP URL（用于视频生成 API 的视觉连续性）
+  // 灏惧抚鍥剧墖鐨?HTTP URL锛堢敤浜庤棰戠敓鎴?API 鐨勮瑙夎繛缁€э級
   endFrameHttpUrl: string | null;
-  // 尾帧来源：null=无 | upload=用户上传 | ai-generated=AI生成 | next-scene=下一分镜首帧 | video-extracted=从视频提取
-  endFrameSource: 'upload' | 'ai-generated' | 'next-scene' | 'video-extracted' | null;
-  // 尾帧图像提示词（英文，用于图像生成 API）
-  // 重点：结束姿势、位置变化后的状态（静态描述）
+  // 灏惧抚鏉ユ簮锛歯ull=鏃?| upload=鐢ㄦ埛涓婁紶 | ai-generated=AI鐢熸垚 | next-scene=涓嬩竴鍒嗛暅棣栧抚 | video-extracted=浠庤棰戞彁鍙?| prev-scene-cascade=涓婁竴鍒嗛暅鎴抚绾ц仈
+  endFrameSource: 'upload' | 'ai-generated' | 'next-scene' | 'video-extracted' | 'prev-scene-cascade' | null;
+  // 灏惧抚鍥惧儚鎻愮ず璇嶏紙鑻辨枃锛岀敤浜庡浘鍍忕敓鎴?API锛?
+  // 閲嶇偣锛氱粨鏉熷Э鍔裤€佷綅缃彉鍖栧悗鐨勭姸鎬侊紙闈欐€佹弿杩帮級
   endFramePrompt: string;
-  // 尾帧图像提示词（中文，用于用户显示/编辑）
+  // 灏惧抚鍥惧儚鎻愮ず璇嶏紙涓枃锛岀敤浜庣敤鎴锋樉绀?缂栬緫锛?
   endFramePromptZh: string;
-  // 尾帧生成状态
+  // 灏惧抚鐢熸垚鐘舵€?
   endFrameStatus: GenerationStatus;
   endFrameProgress: number; // 0-100
   endFrameError: string | null;
   
-  // ========== 视频动作 (Video Action / Movement) ==========
-  // 视频动作提示词（英文，用于视频生成 API）
-  // 重点：动作过程、镜头运动、氛围变化（动态描述）
-  // 注意：不需要详细描述人物外观，因为已有首帧图片
+  // ========== 瑙嗛鍔ㄤ綔 (Video Action / Movement) ==========
+  // 瑙嗛鍔ㄤ綔鎻愮ず璇嶏紙鑻辨枃锛岀敤浜庤棰戠敓鎴?API锛?
+  // 閲嶇偣锛氬姩浣滆繃绋嬨€侀暅澶磋繍鍔ㄣ€佹皼鍥村彉鍖栵紙鍔ㄦ€佹弿杩帮級
+  // 娉ㄦ剰锛氫笉闇€瑕佽缁嗘弿杩颁汉鐗╁瑙傦紝鍥犱负宸叉湁棣栧抚鍥剧墖
   videoPrompt: string;
-  // 视频动作提示词（中文，用于用户显示/编辑）
+  // 瑙嗛鍔ㄤ綔鎻愮ず璇嶏紙涓枃锛岀敤浜庣敤鎴锋樉绀?缂栬緫锛?
   videoPromptZh: string;
-  // 视频生成状态
+  // 瑙嗛鐢熸垚鐘舵€?
   videoStatus: GenerationStatus;
   videoProgress: number; // 0-100
   videoUrl: string | null;
   videoError: string | null;
-  // 媒体库引用（用于拖拽到时间线）
+  // 濯掍綋搴撳紩鐢紙鐢ㄤ簬鎷栨嫿鍒版椂闂寸嚎锛?
   videoMediaId: string | null;
   
-  // ========== 角色与情绪 ==========
-  // 角色库选择（用于视频生成时的角色一致性）
+  // ========== 瑙掕壊涓庢儏缁?==========
+  // 瑙掕壊搴撻€夋嫨锛堢敤浜庤棰戠敓鎴愭椂鐨勮鑹蹭竴鑷存€э級
   characterIds: string[];
-  // 情绪标签（有序，用于视频氛围和语气控制）
+  // 瑙掕壊琛ｆ┍鍙樹綋鏄犲皠锛坈harId 鈫?variationId锛岀己鐪佺敤鍩虹瀹氬鐓э級
+  characterVariationMap?: Record<string, string>;
+  // 鎯呯华鏍囩锛堟湁搴忥紝鐢ㄤ簬瑙嗛姘涘洿鍜岃姘旀帶鍒讹級
   emotionTags: EmotionTag[];
   
-  // ========== 剧本导入信息（参考用）==========
-  // 对白/台词（用于配音和字幕）
+  // ========== 鍓ф湰瀵煎叆淇℃伅锛堝弬鑰冪敤锛?=========
+  // 瀵圭櫧/鍙拌瘝锛堢敤浜庨厤闊冲拰瀛楀箷锛?
   dialogue: string;
-  // 动作描述（从剧本导入，用于参考）
+  // 鍔ㄤ綔鎻忚堪锛堜粠鍓ф湰瀵煎叆锛岀敤浜庡弬鑰冿級
   actionSummary: string;
-  // 镜头运动描述（Dolly In, Pan Right, Static 等）
+  // 闀滃ご杩愬姩鎻忚堪锛圖olly In, Pan Right, Static 绛夛級
   cameraMovement: string;
-  // 音效文本描述（从剧本导入）
+  // 闊虫晥鏂囨湰鎻忚堪锛堜粠鍓ф湰瀵煎叆锛?
   soundEffectText: string;
   
-  // ========== 视频参数 ==========
-  // 景别类型（影响视觉提示词）
+  // ========== 瑙嗛鍙傛暟 ==========
+  // 鏅埆绫诲瀷锛堝奖鍝嶈瑙夋彁绀鸿瘝锛?
   shotSize: ShotSizeType | null;
-  // 视频时长（API 参数，5秒或10秒）
+  // 瑙嗛鏃堕暱锛圓PI 鍙傛暟锛?绉掓垨10绉掞級
   duration: DurationType;
-  // 环境声描述（拼入提示词）
+  // 鐜澹版弿杩帮紙鎷煎叆鎻愮ず璇嶏級
   ambientSound: string;
-  // 音效标签（拼入提示词）- 旧字段，保留兼容
+  // 闊虫晥鏍囩锛堟嫾鍏ユ彁绀鸿瘝锛? 鏃у瓧娈碉紝淇濈暀鍏煎
   soundEffects: SoundEffectTag[];
   
-  // ========== 音频开关（控制是否拼入视频生成提示词） ==========
-  audioAmbientEnabled?: boolean;   // 环境音开关，默认 true
-  audioSfxEnabled?: boolean;       // 音效开关，默认 true
-  audioDialogueEnabled?: boolean;  // 对白开关，默认 true
-  audioBgmEnabled?: boolean;       // 背景音乐开关，默认 false（禁止）
-  backgroundMusic?: string;        // 背景音乐描述文本
+  // ========== 闊抽寮€鍏筹紙鎺у埗鏄惁鎷煎叆瑙嗛鐢熸垚鎻愮ず璇嶏級 ==========
+  audioAmbientEnabled?: boolean;   // 鐜闊冲紑鍏筹紝榛樿 true
+  audioSfxEnabled?: boolean;       // 闊虫晥寮€鍏筹紝榛樿 true
+  audioDialogueEnabled?: boolean;  // 瀵圭櫧寮€鍏筹紝榛樿 true
+  audioBgmEnabled?: boolean;       // 鑳屾櫙闊充箰寮€鍏筹紝榛樿 false锛堢姝級
+  backgroundMusic?: string;        // 鑳屾櫙闊充箰鎻忚堪鏂囨湰
   
-  // ========== 分镜位置信息 ==========
+  // ========== 鍒嗛暅浣嶇疆淇℃伅 ==========
   row: number;
   col: number;
   sourceRect: {
@@ -193,72 +195,76 @@ export interface SplitScene {
     height: number;
   };
   
-  // ========== 场景库关联（用于参考图） ==========
-  // 首帧场景关联
-  sceneLibraryId?: string;           // 场景库 ID
-  viewpointId?: string;              // 视角 ID (如 'sofa', 'dining')
-  subViewId?: string;                // 四视图子场景 ID (如 '正面', '背面')
-  sceneReferenceImage?: string;      // 场景背景参考图 URL
+  // ========== 鍦烘櫙搴撳叧鑱旓紙鐢ㄤ簬鍙傝€冨浘锛?==========
+  // 棣栧抚鍦烘櫙鍏宠仈
+  sceneLibraryId?: string;           // 鍦烘櫙搴?ID
+  viewpointId?: string;              // 瑙嗚 ID (濡?'sofa', 'dining')
+  subViewId?: string;                // 鍥涜鍥惧瓙鍦烘櫙 ID (濡?'姝ｉ潰', '鑳岄潰')
+  sceneReferenceImage?: string;      // 鍦烘櫙鑳屾櫙鍙傝€冨浘 URL
   
-  // 尾帧场景关联（可能与首帧不同）
-  endFrameSceneLibraryId?: string;   // 尾帧场景库 ID
-  endFrameViewpointId?: string;      // 尾帧视角 ID
-  endFrameSubViewId?: string;        // 尾帧四视图子场景 ID
-  endFrameSceneReferenceImage?: string; // 尾帧场景背景参考图 URL
+  // 灏惧抚鍦烘櫙鍏宠仈锛堝彲鑳戒笌棣栧抚涓嶅悓锛?
+  endFrameSceneLibraryId?: string;   // 灏惧抚鍦烘櫙搴?ID
+  endFrameViewpointId?: string;      // 灏惧抚瑙嗚 ID
+  endFrameSubViewId?: string;        // 灏惧抚鍥涜鍥惧瓙鍦烘櫙 ID
+  endFrameSceneReferenceImage?: string; // 灏惧抚鍦烘櫙鑳屾櫙鍙傝€冨浘 URL
   
-  // ========== 叙事驱动设计（基于《电影语言的语法》） ==========
-  narrativeFunction?: string;        // 叙事功能：铺垫/升级/高潮/转折/过渡/尾声
-  shotPurpose?: string;              // 镜头目的：为什么用这个镜头
-  visualFocus?: string;              // 视觉焦点：观众应该看什么（按顺序）
-  cameraPosition?: string;           // 机位描述：摄影机相对于人物的位置
-  characterBlocking?: string;        // 人物布局：人物在画面中的位置关系
-  rhythm?: string;                   // 节奏描述：这个镜头的节奏感
-  visualDescription?: string;        // 详细的画面描述
+  // ========== 鍙欎簨椹卞姩璁捐锛堝熀浜庛€婄數褰辫瑷€鐨勮娉曘€嬶級 ==========
+  narrativeFunction?: string;        // 鍙欎簨鍔熻兘锛氶摵鍨?鍗囩骇/楂樻疆/杞姌/杩囨浮/灏惧０
+  shotPurpose?: string;              // 闀滃ご鐩殑锛氫负浠€涔堢敤杩欎釜闀滃ご
+  visualFocus?: string;              // 瑙嗚鐒︾偣锛氳浼楀簲璇ョ湅浠€涔堬紙鎸夐『搴忥級
+  cameraPosition?: string;           // 鏈轰綅鎻忚堪锛氭憚褰辨満鐩稿浜庝汉鐗╃殑浣嶇疆
+  characterBlocking?: string;        // 浜虹墿甯冨眬锛氫汉鐗╁湪鐢婚潰涓殑浣嶇疆鍏崇郴
+  rhythm?: string;                   // 鑺傚鎻忚堪锛氳繖涓暅澶寸殑鑺傚鎰?
+  visualDescription?: string;        // 璇︾粏鐨勭敾闈㈡弿杩?
   
-  // ========== 💡 灯光师 (Gaffer) — 每个分镜独立 ==========
-  lightingStyle?: LightingStyle;           // 灯光风格
-  lightingDirection?: LightingDirection;   // 主光源方向
-  colorTemperature?: ColorTemperature;     // 色温
-  lightingNotes?: string;                  // 灯光补充说明
+  // ========== 馃挕 鐏厜甯?(Gaffer) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  lightingStyle?: LightingStyle;           // 鐏厜椋庢牸
+  lightingDirection?: LightingDirection;   // 涓诲厜婧愭柟鍚?
+  colorTemperature?: ColorTemperature;     // 鑹叉俯
+  lightingNotes?: string;                  // 鐏厜琛ュ厖璇存槑
   
-  // ========== 🔍 跟焦员 (Focus Puller) — 每个分镜独立 ==========
-  depthOfField?: DepthOfField;             // 景深
-  focusTarget?: string;                    // 焦点目标: "人物面部" / "桌上的信封"
-  focusTransition?: FocusTransition;       // 转焦动作
+  // ========== 馃攳 璺熺劍鍛?(Focus Puller) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  depthOfField?: DepthOfField;             // 鏅繁
+  focusTarget?: string;                    // 鐒︾偣鐩爣: "浜虹墿闈㈤儴" / "妗屼笂鐨勪俊灏?
+  focusTransition?: FocusTransition;       // 杞劍鍔ㄤ綔
   
-  // ========== 🎥 器材组 (Camera Rig) — 每个分镜独立 ==========
-  cameraRig?: CameraRig;                   // 拍摄器材类型
-  movementSpeed?: MovementSpeed;           // 运动速度
+  // ========== 馃帴 鍣ㄦ潗缁?(Camera Rig) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  cameraRig?: CameraRig;                   // 鎷嶆憚鍣ㄦ潗绫诲瀷
+  movementSpeed?: MovementSpeed;           // 杩愬姩閫熷害
   
-  // ========== 🌧️ 特效师 (On-set SFX) — 每个分镜独立 ==========
-  atmosphericEffects?: AtmosphericEffect[]; // 氛围特效（可多选）
-  effectIntensity?: EffectIntensity;       // 特效强度
+  // ========== 馃導锔?鐗规晥甯?(On-set SFX) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  atmosphericEffects?: AtmosphericEffect[]; // 姘涘洿鐗规晥锛堝彲澶氶€夛級
+  effectIntensity?: EffectIntensity;       // 鐗规晥寮哄害
   
-  // ========== ⬜️ 速度控制 (Speed Ramping) — 每个分镜独立 ==========
-  playbackSpeed?: PlaybackSpeed;           // 播放速度
+  // ========== 猬滐笍 閫熷害鎺у埗 (Speed Ramping) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  playbackSpeed?: PlaybackSpeed;           // 鎾斁閫熷害
   
-  // ========== 📰 拍摄角度 / 焦距 / 摄影技法 — 每个分镜独立 ==========
-  cameraAngle?: CameraAngle;               // 拍摄角度
-  focalLength?: FocalLength;               // 镜头焦距
-  photographyTechnique?: PhotographyTechnique; // 摄影技法
+  // ========== 馃摪 鎷嶆憚瑙掑害 / 鐒﹁窛 / 鎽勫奖鎶€娉?鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  cameraAngle?: CameraAngle;               // 鎷嶆憚瑙掑害
+  focalLength?: FocalLength;               // 闀滃ご鐒﹁窛
+  photographyTechnique?: PhotographyTechnique; // 鎽勫奖鎶€娉?
   
-  // ========== 🎬 特殊拍摄手法 — 每个分镜独立 ==========
-  specialTechnique?: string;               // 特殊拍摄手法（希区柯克变焦、子弹时间等）
+  // ========== 馃幀 鐗规畩鎷嶆憚鎵嬫硶 鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  specialTechnique?: string;               // 鐗规畩鎷嶆憚鎵嬫硶锛堝笇鍖烘煰鍏嬪彉鐒︺€佸瓙寮规椂闂寸瓑锛?
   
-  // ========== 📋 场记/连戏 (Continuity) — 每个分镜独立 ==========
-  continuityRef?: ContinuityRef;           // 连戏参考
+  // ========== 馃搵 鍦鸿/杩炴垙 (Continuity) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
+  continuityRef?: ContinuityRef;           // 杩炴垙鍙傝€?
   
-  // 首帧来源（用于标记）
+  // 棣栧抚鏉ユ簮锛堢敤浜庢爣璁帮級
   imageSource?: 'ai-generated' | 'upload' | 'storyboard';
   
-  // ========== 视角切换历史记录 ==========
-  // 首帧视角切换历史
+  // ========== 闆嗕綔鐢ㄥ煙 ==========
+  sourceEpisodeIndex?: number;   // 鏉ユ簮闆嗗簭鍙?
+  sourceEpisodeId?: string;      // 鏉ユ簮闆?ID
+
+  // ========== 瑙嗚鍒囨崲鍘嗗彶璁板綍 ==========
+  // 棣栧抚瑙嗚鍒囨崲鍘嗗彶
   startFrameAngleSwitchHistory?: Array<{
     imageUrl: string;
     angleLabel: string;
     timestamp: number;
   }>;
-  // 尾帧视角切换历史
+  // 灏惧抚瑙嗚鍒囨崲鍘嗗彶
   endFrameAngleSwitchHistory?: Array<{
     imageUrl: string;
     angleLabel: string;
@@ -266,16 +272,31 @@ export interface SplitScene {
   }>;
 }
 
-// 预告片时长类型
+// 棰勫憡鐗囨椂闀跨被鍨?
 export type TrailerDuration = 10 | 30 | 60;
 
-// 预告片配置
+// 棰勫憡鐗囬厤缃?
 export interface TrailerConfig {
-  duration: TrailerDuration;  // 秒
-  shotIds: string[];          // 挑选的分镜 ID 列表（引用剧本中的 Shot ID）
-  generatedAt?: number;       // 生成时间
+  duration: TrailerDuration;  // 绉?
+  shotIds: string[];          // 鎸戦€夌殑鍒嗛暅 ID 鍒楄〃锛堝紩鐢ㄥ墽鏈腑鐨?Shot ID锛?
+  generatedAt?: number;       // 鐢熸垚鏃堕棿
   status: 'idle' | 'generating' | 'completed' | 'error';
   error?: string;
+}
+
+export interface DirectorScreenplayDraft {
+  prompt: string;
+  selectedCharacterIds: string[];
+  updatedAt: number;
+}
+
+export interface DirectorEditorPrefs {
+  imageGenMode: 'single' | 'merged';
+  frameMode: 'first' | 'last' | 'both';
+  refStrategy: 'cluster' | 'minimal' | 'none';
+  useExemplar: boolean;
+  activeTab: 'editing' | 'trailer';
+  episodeViewScope: 'all' | 'episode';
 }
 
 // Per-project director data
@@ -293,9 +314,9 @@ export interface DirectorProjectData {
     videoResolution: '480p' | '720p' | '1080p';
     sceneCount: number;
     storyPrompt: string;
-    /** 直接存储的视觉风格预设 ID（如 '2d_ghibli'），用于精确反查 */
+    /** 鐩存帴瀛樺偍鐨勮瑙夐鏍奸璁?ID锛堝 '2d_ghibli'锛夛紝鐢ㄤ簬绮剧‘鍙嶆煡 */
     visualStyleId?: string;
-    /** 当前分镜数据对应的已校准风格 ID（切换风格时用于判断是否需要重新校准） */
+    /** 褰撳墠鍒嗛暅鏁版嵁瀵瑰簲鐨勫凡鏍″噯椋庢牸 ID锛堝垏鎹㈤鏍兼椂鐢ㄤ簬鍒ゆ柇鏄惁闇€瑕侀噸鏂版牎鍑嗭級 */
     calibratedStyleId?: string;
     styleTokens?: string[];
     characterReferenceImages?: string[];
@@ -306,12 +327,14 @@ export interface DirectorProjectData {
   screenplayStatus: ScreenplayStatus;
   screenplayError: string | null;
   
-  // ========== 预告片功能 ==========
+  // ========== 棰勫憡鐗囧姛鑳?==========
   trailerConfig: TrailerConfig;
-  trailerScenes: SplitScene[];  // 预告片专用的分镜编辑列表
+  trailerScenes: SplitScene[];  // 棰勫憡鐗囦笓鐢ㄧ殑鍒嗛暅缂栬緫鍒楄〃
   
-  // ========== 摄影风格档案（项目级） ==========
-  cinematographyProfileId?: string;   // 选中的摄影风格预设 ID（如 'film-noir'）
+  // ========== 鎽勫奖椋庢牸妗ｆ锛堥」鐩骇锛?==========
+  cinematographyProfileId?: string;   // 閫変腑鐨勬憚褰遍鏍奸璁?ID锛堝 'film-noir'锛?
+  screenplayDraft: DirectorScreenplayDraft;
+  editorPrefs: DirectorEditorPrefs;
 }
 
 interface DirectorState {
@@ -367,55 +390,60 @@ interface DirectorActions {
   setProjectFolderId: (folderId: string | null) => void;
   setSplitScenes: (scenes: SplitScene[]) => void;
   
-  // 首帧提示词更新（静态画面描述）
+  // 棣栧抚鎻愮ず璇嶆洿鏂帮紙闈欐€佺敾闈㈡弿杩帮級
   updateSplitSceneImagePrompt: (sceneId: number, prompt: string, promptZh?: string) => void;
-  // 视频提示词更新（动作过程描述）
+  // 瑙嗛鎻愮ず璇嶆洿鏂帮紙鍔ㄤ綔杩囩▼鎻忚堪锛?
   updateSplitSceneVideoPrompt: (sceneId: number, prompt: string, promptZh?: string) => void;
-  // 尾帧提示词更新（静态画面描述）
+  // 灏惧抚鎻愮ず璇嶆洿鏂帮紙闈欐€佺敾闈㈡弿杩帮級
   updateSplitSceneEndFramePrompt: (sceneId: number, prompt: string, promptZh?: string) => void;
-  // 设置是否需要尾帧
+  // 璁剧疆鏄惁闇€瑕佸熬甯?
   updateSplitSceneNeedsEndFrame: (sceneId: number, needsEndFrame: boolean) => void;
-  // 兼容旧 API：更新视频提示词（实际上更新 videoPrompt）
+  // 鍏煎鏃?API锛氭洿鏂拌棰戞彁绀鸿瘝锛堝疄闄呬笂鏇存柊 videoPrompt锛?
   updateSplitScenePrompt: (sceneId: number, prompt: string, promptZh?: string) => void;
   
   updateSplitSceneImage: (sceneId: number, imageDataUrl: string, width?: number, height?: number, httpUrl?: string) => void;
   updateSplitSceneImageStatus: (sceneId: number, updates: Partial<Pick<SplitScene, 'imageStatus' | 'imageProgress' | 'imageError'>>) => void;
   updateSplitSceneVideo: (sceneId: number, updates: Partial<Pick<SplitScene, 'videoStatus' | 'videoProgress' | 'videoUrl' | 'videoError' | 'videoMediaId'>>) => void;
-  // 尾帧图片上传/更新
-  updateSplitSceneEndFrame: (sceneId: number, imageUrl: string | null, source?: 'upload' | 'ai-generated' | 'next-scene' | 'video-extracted', httpUrl?: string | null) => void;
-  // 尾帧生成状态更新
+  // 灏惧抚鍥剧墖涓婁紶/鏇存柊
+  updateSplitSceneEndFrame: (sceneId: number, imageUrl: string | null, source?: 'upload' | 'ai-generated' | 'next-scene' | 'video-extracted' | 'prev-scene-cascade', httpUrl?: string | null) => void;
+  // 灏惧抚鐢熸垚鐘舵€佹洿鏂?
   updateSplitSceneEndFrameStatus: (sceneId: number, updates: Partial<Pick<SplitScene, 'endFrameStatus' | 'endFrameProgress' | 'endFrameError'>>) => void;
-  // 角色库、情绪标签更新方法
+  // 瑙掕壊搴撱€佹儏缁爣绛炬洿鏂版柟娉?
   updateSplitSceneCharacters: (sceneId: number, characterIds: string[]) => void;
+  updateSplitSceneCharacterVariationMap: (sceneId: number, characterVariationMap: Record<string, string>) => void;
   updateSplitSceneEmotions: (sceneId: number, emotionTags: EmotionTag[]) => void;
-  // 景别、时长、环境声、音效更新方法
+  // 鏅埆銆佹椂闀裤€佺幆澧冨０銆侀煶鏁堟洿鏂版柟娉?
   updateSplitSceneShotSize: (sceneId: number, shotSize: ShotSizeType | null) => void;
   updateSplitSceneDuration: (sceneId: number, duration: DurationType) => void;
   updateSplitSceneAmbientSound: (sceneId: number, ambientSound: string) => void;
   updateSplitSceneSoundEffects: (sceneId: number, soundEffects: SoundEffectTag[]) => void;
-  // 场景库关联更新方法
+  // 鍦烘櫙搴撳叧鑱旀洿鏂版柟娉?
   updateSplitSceneReference: (sceneId: number, sceneLibraryId?: string, viewpointId?: string, referenceImage?: string, subViewId?: string) => void;
   updateSplitSceneEndFrameReference: (sceneId: number, sceneLibraryId?: string, viewpointId?: string, referenceImage?: string, subViewId?: string) => void;
-  // 通用字段更新方法（用于双击编辑）
+  // 閫氱敤瀛楁鏇存柊鏂规硶锛堢敤浜庡弻鍑荤紪杈戯級
   updateSplitSceneField: (sceneId: number, field: keyof SplitScene, value: any) => void;
-  // 视角切换历史记录
+  // 瑙嗚鍒囨崲鍘嗗彶璁板綍
   addAngleSwitchHistory: (sceneId: number, type: 'start' | 'end', historyItem: { imageUrl: string; angleLabel: string; timestamp: number }) => void;
   deleteSplitScene: (sceneId: number) => void;
-  setStoryboardConfig: (config: Partial<DirectorState['storyboardConfig']>) => void;
+  addBlankSplitScene: () => void;
+  setStoryboardConfig: (config: Partial<DirectorProjectData['storyboardConfig']>) => void;
+  setScreenplayDraft: (draft: Partial<DirectorScreenplayDraft>) => void;
+  clearScreenplayDraft: () => void;
+  setEditorPrefs: (prefs: Partial<DirectorEditorPrefs>) => void;
   resetStoryboard: () => void;
   
   // Mode 2: Add scenes from script directly (skip storyboard generation)
   addScenesFromScript: (scenes: Array<{
     promptZh: string;
     promptEn?: string;
-    // 三层提示词系统 (Seedance 1.5 Pro)
-    imagePrompt?: string;      // 首帧提示词（英文）
-    imagePromptZh?: string;    // 首帧提示词（中文）
-    videoPrompt?: string;      // 视频提示词（英文）
-    videoPromptZh?: string;    // 视频提示词（中文）
-    endFramePrompt?: string;   // 尾帧提示词（英文）
-    endFramePromptZh?: string; // 尾帧提示词（中文）
-    needsEndFrame?: boolean;   // 是否需要尾帧
+    // 涓夊眰鎻愮ず璇嶇郴缁?(Seedance 1.5 Pro)
+    imagePrompt?: string;      // 棣栧抚鎻愮ず璇嶏紙鑻辨枃锛?
+    imagePromptZh?: string;    // 棣栧抚鎻愮ず璇嶏紙涓枃锛?
+    videoPrompt?: string;      // 瑙嗛鎻愮ず璇嶏紙鑻辨枃锛?
+    videoPromptZh?: string;    // 瑙嗛鎻愮ず璇嶏紙涓枃锛?
+    endFramePrompt?: string;   // 灏惧抚鎻愮ず璇嶏紙鑻辨枃锛?
+    endFramePromptZh?: string; // 灏惧抚鎻愮ず璇嶏紙涓枃锛?
+    needsEndFrame?: boolean;   // 鏄惁闇€瑕佸熬甯?
     characterIds?: string[];
     emotionTags?: EmotionTag[];
     shotSize?: ShotSizeType | null;
@@ -428,11 +456,11 @@ interface DirectorActions {
     cameraMovement?: string;
     sceneName?: string;
     sceneLocation?: string;
-    // 场景库关联（自动匹配）
+    // 鍦烘櫙搴撳叧鑱旓紙鑷姩鍖归厤锛?
     sceneLibraryId?: string;
     viewpointId?: string;
     sceneReferenceImage?: string;
-    // 叙事驱动设计（基于《电影语言的语法》）
+    // 鍙欎簨椹卞姩璁捐锛堝熀浜庛€婄數褰辫瑷€鐨勮娉曘€嬶級
     narrativeFunction?: string;
     shotPurpose?: string;
     visualFocus?: string;
@@ -440,7 +468,7 @@ interface DirectorActions {
     characterBlocking?: string;
     rhythm?: string;
     visualDescription?: string;
-    // 拍摄控制（灯光/焦点/器材/特效/速度）— 每个分镜独立
+    // 鎷嶆憚鎺у埗锛堢伅鍏?鐒︾偣/鍣ㄦ潗/鐗规晥/閫熷害锛夆€?姣忎釜鍒嗛暅鐙珛
     lightingStyle?: LightingStyle;
     lightingDirection?: LightingDirection;
     colorTemperature?: ColorTemperature;
@@ -453,12 +481,15 @@ interface DirectorActions {
     atmosphericEffects?: AtmosphericEffect[];
     effectIntensity?: EffectIntensity;
     playbackSpeed?: PlaybackSpeed;
-    // 拍摄角度 / 焦距 / 技法
+    // 鎷嶆憚瑙掑害 / 鐒﹁窛 / 鎶€娉?
     cameraAngle?: CameraAngle;
     focalLength?: FocalLength;
     photographyTechnique?: PhotographyTechnique;
-    // 特殊拍摄手法
+    // 鐗规畩鎷嶆憚鎵嬫硶
     specialTechnique?: string;
+    // 闆嗕綔鐢ㄥ煙
+    sourceEpisodeIndex?: number;
+    sourceEpisodeId?: string;
   }>) => void;
   
   // Workflow actions (these will trigger worker commands)
@@ -479,14 +510,29 @@ interface DirectorActions {
   onAllImagesCompleted: () => void;   // All images done, ready for review
   onAllCompleted: () => void;          // All videos done
   
-  // ========== 预告片功能 ==========
+  // ========== 棰勫憡鐗囧姛鑳?==========
   setTrailerDuration: (duration: TrailerDuration) => void;
   setTrailerScenes: (scenes: SplitScene[]) => void;
   setTrailerConfig: (config: Partial<TrailerConfig>) => void;
   clearTrailer: () => void;
   
-  // ========== 摄影风格档案 ==========
+  // ========== 鎽勫奖椋庢牸妗ｆ ==========
   setCinematographyProfileId: (profileId: string | undefined) => void;
+  
+  // ========== 瑙嗛鎴抚鈫掗甯х骇鑱旇縼绉?==========
+  cascadeFramesToNextScene: (params: {
+    nextSceneId: number;
+    // 鍘熼甯?鈫?灏惧抚
+    origFirstFrameImage: string;
+    origFirstFrameHttpUrl: string | null;
+    origFirstFramePrompt: string;
+    origFirstFramePromptZh: string;
+    // 瑙嗛鎴彇甯?鈫?鏂伴甯?
+    newFirstFrameImage: string;
+    newFirstFrameHttpUrl: string | null;
+    newFirstFramePrompt: string;
+    newFirstFramePromptZh: string;
+  }) => void;
 }
 
 type DirectorStore = DirectorState & DirectorActions;
@@ -512,7 +558,7 @@ const defaultConfig: GenerationConfig = {
 const defaultProjectData = (): DirectorProjectData => ({
   storyboardImage: null,
   storyboardImageMediaId: null,
-  storyboardStatus: 'idle',
+  storyboardStatus: 'editing',
   storyboardError: null,
   splitScenes: [],
   projectFolderId: null,
@@ -529,16 +575,68 @@ const defaultProjectData = (): DirectorProjectData => ({
   screenplay: null,
   screenplayStatus: 'idle',
   screenplayError: null,
-  // 预告片默认值
+  // 棰勫憡鐗囬粯璁ゅ€?
   trailerConfig: {
     duration: 30,
     shotIds: [],
     status: 'idle',
   },
   trailerScenes: [],
-  // 摄影风格档案：使用经典电影摄影作为默认基准
+  // 鎽勫奖椋庢牸妗ｆ锛氫娇鐢ㄧ粡鍏哥數褰辨憚褰变綔涓洪粯璁ゅ熀鍑?
   cinematographyProfileId: DEFAULT_CINEMATOGRAPHY_PROFILE_ID,
+  screenplayDraft: {
+    prompt: '',
+    selectedCharacterIds: [],
+    updatedAt: 0,
+  },
+  editorPrefs: {
+    imageGenMode: 'merged',
+    frameMode: 'first',
+    refStrategy: 'cluster',
+    useExemplar: true,
+    activeTab: 'editing',
+    episodeViewScope: 'episode',
+  },
 });
+
+const defaultScreenplayDraft: DirectorScreenplayDraft = {
+  prompt: '',
+  selectedCharacterIds: [],
+  updatedAt: 0,
+};
+
+const defaultEditorPrefs: DirectorEditorPrefs = {
+  imageGenMode: 'merged',
+  frameMode: 'first',
+  refStrategy: 'cluster',
+  useExemplar: true,
+  activeTab: 'editing',
+  episodeViewScope: 'episode',
+};
+
+const normalizeDirectorProjectData = (project: any): DirectorProjectData => {
+  const defaults = defaultProjectData();
+  return {
+    ...defaults,
+    ...project,
+    storyboardConfig: {
+      ...defaults.storyboardConfig,
+      ...(project?.storyboardConfig || {}),
+    },
+    trailerConfig: {
+      ...defaults.trailerConfig,
+      ...(project?.trailerConfig || {}),
+    },
+    screenplayDraft: {
+      ...defaultScreenplayDraft,
+      ...(project?.screenplayDraft || {}),
+    },
+    editorPrefs: {
+      ...defaultEditorPrefs,
+      ...(project?.editorPrefs || {}),
+    },
+  };
+};
 
 // ==================== Initial State ====================
 
@@ -822,35 +920,35 @@ export const useDirectorStore = create<DirectorStore>()(
     // Ensure all scenes have all fields initialized with defaults
     const initialized = scenes.map(s => ({
       ...s,
-      // 场景基本信息
+      // 鍦烘櫙鍩烘湰淇℃伅
       sceneName: (s as any).sceneName ?? '',
       sceneLocation: (s as any).sceneLocation ?? '',
       
-      // ========== 首帧相关 ==========
+      // ========== 棣栧抚鐩稿叧 ==========
       imageHttpUrl: (s as any).imageHttpUrl ?? null,
-      // 首帧提示词（新增）
+      // 棣栧抚鎻愮ず璇嶏紙鏂板锛?
       imagePrompt: (s as any).imagePrompt ?? s.videoPrompt ?? '',
       imagePromptZh: (s as any).imagePromptZh ?? s.videoPromptZh ?? s.videoPrompt ?? '',
-      // 首帧生成状态
+      // 棣栧抚鐢熸垚鐘舵€?
       imageStatus: s.imageStatus || 'completed' as const,
       imageProgress: s.imageProgress ?? 100,
       imageError: s.imageError ?? null,
       
-      // ========== 尾帧相关 ==========
-      // 是否需要尾帧（新增，默认 false）
+      // ========== 灏惧抚鐩稿叧 ==========
+      // 鏄惁闇€瑕佸熬甯э紙鏂板锛岄粯璁?false锛?
       needsEndFrame: (s as any).needsEndFrame ?? false,
       endFrameImageUrl: s.endFrameImageUrl ?? null,
       endFrameHttpUrl: (s as any).endFrameHttpUrl ?? null,
       endFrameSource: s.endFrameSource ?? null,
-      // 尾帧提示词（新增）
+      // 灏惧抚鎻愮ず璇嶏紙鏂板锛?
       endFramePrompt: (s as any).endFramePrompt ?? '',
       endFramePromptZh: (s as any).endFramePromptZh ?? '',
-      // 尾帧生成状态（新增）
+      // 灏惧抚鐢熸垚鐘舵€侊紙鏂板锛?
       endFrameStatus: (s as any).endFrameStatus || 'idle' as const,
       endFrameProgress: (s as any).endFrameProgress ?? 0,
       endFrameError: (s as any).endFrameError ?? null,
       
-      // ========== 视频相关 ==========
+      // ========== 瑙嗛鐩稿叧 ==========
       videoPromptZh: s.videoPromptZh ?? s.videoPrompt ?? '',
       videoStatus: s.videoStatus || 'idle' as const,
       videoProgress: s.videoProgress ?? 0,
@@ -858,48 +956,48 @@ export const useDirectorStore = create<DirectorStore>()(
       videoError: s.videoError ?? null,
       videoMediaId: s.videoMediaId ?? null,
       
-      // ========== 角色与情绪 ==========
+      // ========== 瑙掕壊涓庢儏缁?==========
       characterIds: s.characterIds ?? [],
       emotionTags: s.emotionTags ?? [],
       
-      // ========== 剧本导入信息 ==========
+      // ========== 鍓ф湰瀵煎叆淇℃伅 ==========
       dialogue: s.dialogue ?? '',
       actionSummary: s.actionSummary ?? '',
       cameraMovement: s.cameraMovement ?? '',
       soundEffectText: (s as any).soundEffectText ?? '',
       
-      // ========== 视频参数 ==========
+      // ========== 瑙嗛鍙傛暟 ==========
       shotSize: s.shotSize ?? null,
       duration: s.duration ?? 5,
       ambientSound: s.ambientSound ?? '',
       soundEffects: s.soundEffects ?? [],
       
-      // ========== 灯光师 (Gaffer) — 每个分镜独立 ==========
+      // ========== 鐏厜甯?(Gaffer) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
       lightingStyle: s.lightingStyle ?? undefined,
       lightingDirection: s.lightingDirection ?? undefined,
       colorTemperature: s.colorTemperature ?? undefined,
       lightingNotes: s.lightingNotes ?? undefined,
       
-      // ========== 跟焦员 (Focus Puller) — 每个分镜独立 ==========
+      // ========== 璺熺劍鍛?(Focus Puller) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
       depthOfField: s.depthOfField ?? undefined,
       focusTarget: s.focusTarget ?? undefined,
       focusTransition: s.focusTransition ?? undefined,
       
-      // ========== 器材组 (Camera Rig) — 每个分镜独立 ==========
+      // ========== 鍣ㄦ潗缁?(Camera Rig) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
       cameraRig: s.cameraRig ?? undefined,
       movementSpeed: s.movementSpeed ?? undefined,
       
-      // ========== 特效师 (On-set SFX) — 每个分镜独立 ==========
+      // ========== 鐗规晥甯?(On-set SFX) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
       atmosphericEffects: s.atmosphericEffects ?? undefined,
       effectIntensity: s.effectIntensity ?? undefined,
       
-      // ========== 速度控制 (Speed Ramping) — 每个分镜独立 ==========
+      // ========== 閫熷害鎺у埗 (Speed Ramping) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
       playbackSpeed: s.playbackSpeed ?? undefined,
       
-      // ========== 特殊拍摄手法 — 每个分镜独立 ==========
+      // ========== 鐗规畩鎷嶆憚鎵嬫硶 鈥?姣忎釜鍒嗛暅鐙珛 ==========
       specialTechnique: s.specialTechnique ?? undefined,
       
-      // ========== 场记/连戏 (Continuity) — 每个分镜独立 ==========
+      // ========== 鍦鸿/杩炴垙 (Continuity) 鈥?姣忎釜鍒嗛暅鐙珛 ==========
       continuityRef: s.continuityRef ?? undefined,
     }));
     
@@ -914,9 +1012,9 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
   
-  // ========== 三层提示词更新方法 ==========
+  // ========== 涓夊眰鎻愮ず璇嶆洿鏂版柟娉?==========
   
-  // 更新首帧提示词（静态画面描述）
+  // 鏇存柊棣栧抚鎻愮ず璇嶏紙闈欐€佺敾闈㈡弿杩帮級
   updateSplitSceneImagePrompt: (sceneId, prompt, promptZh) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -936,7 +1034,7 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
   
-  // 更新视频提示词（动作过程描述）
+  // 鏇存柊瑙嗛鎻愮ず璇嶏紙鍔ㄤ綔杩囩▼鎻忚堪锛?
   updateSplitSceneVideoPrompt: (sceneId, prompt, promptZh) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -956,7 +1054,7 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
   
-  // 更新尾帧提示词（静态画面描述）
+  // 鏇存柊灏惧抚鎻愮ず璇嶏紙闈欐€佺敾闈㈡弿杩帮級
   updateSplitSceneEndFramePrompt: (sceneId, prompt, promptZh) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -976,7 +1074,7 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
   
-  // 设置是否需要尾帧
+  // 璁剧疆鏄惁闇€瑕佸熬甯?
   updateSplitSceneNeedsEndFrame: (sceneId, needsEndFrame) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -992,7 +1090,7 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
   
-  // 兼容旧 API：更新视频提示词（实际上更新 videoPrompt）
+  // 鍏煎鏃?API锛氭洿鏂拌棰戞彁绀鸿瘝锛堝疄闄呬笂鏇存柊 videoPrompt锛?
   updateSplitScenePrompt: (sceneId, prompt, promptZh) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1012,10 +1110,10 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
 
-  // 更新分镜图片
-  // 注意：当图片变化时，如果没有传入新的 httpUrl，应该清除旧的 httpUrl
-  // 这样可以避免用户从素材库选择新图片后，旧的 HTTP URL 仍然被使用
-  // 关键：同时清除 imageSource，避免视频生成时错误地使用旧的 imageHttpUrl
+  // 鏇存柊鍒嗛暅鍥剧墖
+  // 娉ㄦ剰锛氬綋鍥剧墖鍙樺寲鏃讹紝濡傛灉娌℃湁浼犲叆鏂扮殑 httpUrl锛屽簲璇ユ竻闄ゆ棫鐨?httpUrl
+  // 杩欐牱鍙互閬垮厤鐢ㄦ埛浠庣礌鏉愬簱閫夋嫨鏂板浘鐗囧悗锛屾棫鐨?HTTP URL 浠嶇劧琚娇鐢?
+  // 鍏抽敭锛氬悓鏃舵竻闄?imageSource锛岄伩鍏嶈棰戠敓鎴愭椂閿欒鍦颁娇鐢ㄦ棫鐨?imageHttpUrl
   updateSplitSceneImage: (sceneId, imageDataUrl, width, height, httpUrl) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1024,10 +1122,10 @@ export const useDirectorStore = create<DirectorStore>()(
       scene.id === sceneId ? { 
         ...scene, 
         imageDataUrl,
-        // 如果显式传入 httpUrl（包括空字符串），使用它；否则设置为 null 强制清除
-        // 使用 null 而不是 undefined，确保覆盖旧值
+        // 濡傛灉鏄惧紡浼犲叆 httpUrl锛堝寘鎷┖瀛楃涓诧級锛屼娇鐢ㄥ畠锛涘惁鍒欒缃负 null 寮哄埗娓呴櫎
+        // 浣跨敤 null 鑰屼笉鏄?undefined锛岀‘淇濊鐩栨棫鍊?
         imageHttpUrl: httpUrl !== undefined ? (httpUrl || null) : null,
-        // 如果没有传入 httpUrl，清除 imageSource 标记，避免视频生成时误判
+        // 濡傛灉娌℃湁浼犲叆 httpUrl锛屾竻闄?imageSource 鏍囪锛岄伩鍏嶈棰戠敓鎴愭椂璇垽
         imageSource: httpUrl ? 'ai-generated' : undefined,
         imageStatus: 'completed' as const,
         imageProgress: 100,
@@ -1074,8 +1172,8 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
 
-  // 更新尾帧图片（支持多种来源）
-  // 注意：当尾帧变化时，如果没有传入新的 httpUrl，应该清除旧的 httpUrl
+  // 鏇存柊灏惧抚鍥剧墖锛堟敮鎸佸绉嶆潵婧愶級
+  // 娉ㄦ剰锛氬綋灏惧抚鍙樺寲鏃讹紝濡傛灉娌℃湁浼犲叆鏂扮殑 httpUrl锛屽簲璇ユ竻闄ゆ棫鐨?httpUrl
   updateSplitSceneEndFrame: (sceneId, imageUrl, source, httpUrl) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1084,8 +1182,8 @@ export const useDirectorStore = create<DirectorStore>()(
       scene.id === sceneId ? { 
         ...scene, 
         endFrameImageUrl: imageUrl,
-        // 如果显式传入 httpUrl，使用它；否则清空（因为尾帧已变化或删除）
-        endFrameHttpUrl: httpUrl !== undefined ? httpUrl : (imageUrl ? undefined : null),
+        // 濡傛灉鏄惧紡浼犲叆 httpUrl锛屼娇鐢ㄥ畠锛涘惁鍒欐竻绌猴紙鍥犱负灏惧抚宸插彉鍖栨垨鍒犻櫎锛?
+        endFrameHttpUrl: httpUrl !== undefined ? (httpUrl || null) : null,
         endFrameSource: imageUrl ? (source || 'upload') : null,
         endFrameStatus: imageUrl ? 'completed' as const : 'idle' as const,
         endFrameProgress: imageUrl ? 100 : 0,
@@ -1100,7 +1198,7 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
   
-  // 更新尾帧生成状态
+  // 鏇存柊灏惧抚鐢熸垚鐘舵€?
   updateSplitSceneEndFrameStatus: (sceneId, updates) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1122,6 +1220,21 @@ export const useDirectorStore = create<DirectorStore>()(
     const project = projects[activeProjectId];
     const updated = project.splitScenes.map(scene =>
       scene.id === sceneId ? { ...scene, characterIds } : scene
+    );
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: { ...project, splitScenes: updated },
+      },
+    });
+  },
+
+  updateSplitSceneCharacterVariationMap: (sceneId, characterVariationMap) => {
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    const updated = project.splitScenes.map(scene =>
+      scene.id === sceneId ? { ...scene, characterVariationMap } : scene
     );
     set({
       projects: {
@@ -1206,7 +1319,7 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
 
-  // 场景库关联更新方法（首帧）
+  // 鍦烘櫙搴撳叧鑱旀洿鏂版柟娉曪紙棣栧抚锛?
   updateSplitSceneReference: (sceneId, sceneLibraryId, viewpointId, referenceImage, subViewId) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1225,7 +1338,7 @@ export const useDirectorStore = create<DirectorStore>()(
     console.log('[DirectorStore] Updated scene reference for shot', sceneId, ':', sceneLibraryId, viewpointId, subViewId);
   },
 
-  // 场景库关联更新方法（尾帧）
+  // 鍦烘櫙搴撳叧鑱旀洿鏂版柟娉曪紙灏惧抚锛?
   updateSplitSceneEndFrameReference: (sceneId, sceneLibraryId, viewpointId, referenceImage, subViewId) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1244,7 +1357,7 @@ export const useDirectorStore = create<DirectorStore>()(
     console.log('[DirectorStore] Updated end frame scene reference for shot', sceneId, ':', sceneLibraryId, viewpointId, subViewId);
   },
 
-  // 通用字段更新方法（用于双击编辑）
+  // 閫氱敤瀛楁鏇存柊鏂规硶锛堢敤浜庡弻鍑荤紪杈戯級
   updateSplitSceneField: (sceneId, field, value) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1260,7 +1373,7 @@ export const useDirectorStore = create<DirectorStore>()(
     });
   },
   
-  // 视角切换历史记录更新方法
+  // 瑙嗚鍒囨崲鍘嗗彶璁板綍鏇存柊鏂规硶
   addAngleSwitchHistory: (sceneId, type, historyItem) => {
     const { activeProjectId, projects } = get();
     if (!activeProjectId) return;
@@ -1312,6 +1425,61 @@ export const useDirectorStore = create<DirectorStore>()(
       },
     });
   },
+
+  setScreenplayDraft: (partialDraft) => {
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...project,
+          screenplayDraft: {
+            ...(project.screenplayDraft || defaultScreenplayDraft),
+            ...partialDraft,
+            updatedAt: Date.now(),
+          },
+        },
+      },
+    });
+  },
+
+  clearScreenplayDraft: () => {
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...project,
+          screenplayDraft: {
+            ...defaultScreenplayDraft,
+            updatedAt: Date.now(),
+          },
+        },
+      },
+    });
+  },
+
+  setEditorPrefs: (partialPrefs) => {
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...project,
+          editorPrefs: {
+            ...(project.editorPrefs || defaultEditorPrefs),
+            ...partialPrefs,
+          },
+        },
+      },
+    });
+  },
   
   resetStoryboard: () => {
     const { activeProjectId, projects } = get();
@@ -1323,7 +1491,7 @@ export const useDirectorStore = create<DirectorStore>()(
           ...projects[activeProjectId],
           storyboardImage: null,
           storyboardImageMediaId: null,
-          storyboardStatus: 'idle',
+          storyboardStatus: 'editing',
           storyboardError: null,
           splitScenes: [],
         },
@@ -1348,7 +1516,7 @@ export const useDirectorStore = create<DirectorStore>()(
       imageHttpUrl: null,
       width: 0,
       height: 0,
-      // 三层提示词系统：优先使用专门的三层提示词，否则回退到旧的 promptEn/promptZh
+      // 涓夊眰鎻愮ず璇嶇郴缁燂細浼樺厛浣跨敤涓撻棬鐨勪笁灞傛彁绀鸿瘝锛屽惁鍒欏洖閫€鍒版棫鐨?promptEn/promptZh
       imagePrompt: scene.imagePrompt || scene.promptEn || '',
       imagePromptZh: scene.imagePromptZh || scene.promptZh || '',
       videoPrompt: scene.videoPrompt || scene.promptEn || '',
@@ -1375,17 +1543,17 @@ export const useDirectorStore = create<DirectorStore>()(
       dialogue: scene.dialogue || '',
       actionSummary: scene.actionSummary || '',
       cameraMovement: scene.cameraMovement || '',
-      // 音频开关默认全部开启（背景音乐默认关闭）
+      // 闊抽寮€鍏抽粯璁ゅ叏閮ㄥ紑鍚紙鑳屾櫙闊充箰榛樿鍏抽棴锛?
       audioAmbientEnabled: true,
       audioSfxEnabled: true,
       audioDialogueEnabled: true,
       audioBgmEnabled: false,
       backgroundMusic: scene.backgroundMusic || '',
-      // 场景库关联（自动匹配）
+      // 鍦烘櫙搴撳叧鑱旓紙鑷姩鍖归厤锛?
       sceneLibraryId: scene.sceneLibraryId,
       viewpointId: scene.viewpointId,
       sceneReferenceImage: scene.sceneReferenceImage,
-      // 叙事驱动设计（基于《电影语言的语法》）
+      // 鍙欎簨椹卞姩璁捐锛堝熀浜庛€婄數褰辫瑷€鐨勮娉曘€嬶級
       narrativeFunction: scene.narrativeFunction || '',
       shotPurpose: scene.shotPurpose || '',
       visualFocus: scene.visualFocus || '',
@@ -1393,7 +1561,7 @@ export const useDirectorStore = create<DirectorStore>()(
       characterBlocking: scene.characterBlocking || '',
       rhythm: scene.rhythm || '',
       visualDescription: scene.visualDescription || '',
-      // 拍摄控制（灯光/焦点/器材/特效/速度）— 每个分镜独立
+      // 鎷嶆憚鎺у埗锛堢伅鍏?鐒︾偣/鍣ㄦ潗/鐗规晥/閫熷害锛夆€?姣忎釜鍒嗛暅鐙珛
       lightingStyle: scene.lightingStyle,
       lightingDirection: scene.lightingDirection,
       colorTemperature: scene.colorTemperature,
@@ -1406,9 +1574,9 @@ export const useDirectorStore = create<DirectorStore>()(
       atmosphericEffects: scene.atmosphericEffects,
       effectIntensity: scene.effectIntensity,
       playbackSpeed: scene.playbackSpeed,
-      // 特殊拍摄手法
+      // 鐗规畩鎷嶆憚鎵嬫硶
       specialTechnique: scene.specialTechnique,
-      // 拍摄角度 / 焦距 / 摄影技法
+      // 鎷嶆憚瑙掑害 / 鐒﹁窛 / 鎽勫奖鎶€娉?
       cameraAngle: scene.cameraAngle,
       focalLength: scene.focalLength,
       photographyTechnique: scene.photographyTechnique,
@@ -1420,9 +1588,12 @@ export const useDirectorStore = create<DirectorStore>()(
       videoUrl: null,
       videoError: null,
       videoMediaId: null,
+      // 闆嗕綔鐢ㄥ煙
+      sourceEpisodeIndex: scene.sourceEpisodeIndex,
+      sourceEpisodeId: scene.sourceEpisodeId,
     }));
     
-    // 将 calibratedStyleId 初始化为当前 visualStyleId（新增分镜时标记校准风格）
+    // 灏?calibratedStyleId 鍒濆鍖栦负褰撳墠 visualStyleId锛堟柊澧炲垎闀滄椂鏍囪鏍″噯椋庢牸锛?
     const currentConfig = project.storyboardConfig;
     const calibratedUpdate = currentConfig.visualStyleId && !currentConfig.calibratedStyleId
       ? { storyboardConfig: { ...currentConfig, calibratedStyleId: currentConfig.visualStyleId } }
@@ -1443,30 +1614,117 @@ export const useDirectorStore = create<DirectorStore>()(
     console.log('[DirectorStore] Added', newScenes.length, 'scenes from script, total:', splitScenes.length + newScenes.length);
   },
 
+  // 添加空白分镜（用户手动创建，自行上传图片/填写提示词/生成）
+  addBlankSplitScene: () => {
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    const splitScenes = project?.splitScenes || [];
+    const newId = splitScenes.length > 0 ? Math.max(...splitScenes.map(s => s.id)) + 1 : 0;
+
+    const blankScene: SplitScene = {
+      id: newId,
+      sceneName: `空白分镜 ${newId + 1}`,
+      sceneLocation: '',
+      imageDataUrl: '',
+      imageHttpUrl: null,
+      width: 0,
+      height: 0,
+      imagePrompt: '',
+      imagePromptZh: '',
+      videoPrompt: '',
+      videoPromptZh: '',
+      endFramePrompt: '',
+      endFramePromptZh: '',
+      needsEndFrame: false,
+      row: 0,
+      col: 0,
+      sourceRect: { x: 0, y: 0, width: 0, height: 0 },
+      endFrameImageUrl: null,
+      endFrameHttpUrl: null,
+      endFrameSource: null,
+      endFrameStatus: 'idle',
+      endFrameProgress: 0,
+      endFrameError: null,
+      characterIds: [],
+      emotionTags: [],
+      shotSize: null,
+      duration: 5,
+      ambientSound: '',
+      soundEffects: [],
+      soundEffectText: '',
+      dialogue: '',
+      actionSummary: '',
+      cameraMovement: '',
+      audioAmbientEnabled: true,
+      audioSfxEnabled: true,
+      audioDialogueEnabled: true,
+      audioBgmEnabled: false,
+      backgroundMusic: '',
+      imageStatus: 'idle',
+      imageProgress: 0,
+      imageError: null,
+      videoStatus: 'idle',
+      videoProgress: 0,
+      videoUrl: null,
+      videoError: null,
+      videoMediaId: null,
+    };
+
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...project,
+          splitScenes: [...splitScenes, blankScene],
+          storyboardStatus: 'editing',
+        },
+      },
+    });
+
+    console.log('[DirectorStore] Added blank scene, id:', newId, 'total:', splitScenes.length + 1);
+  },
+
   // Workflow actions
   startScreenplayGeneration: (prompt, images) => {
-    set({ 
-      screenplayStatus: 'generating', 
-      screenplayError: null,
-      screenplay: null,
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...projects[activeProjectId],
+          screenplayStatus: 'generating',
+          screenplayError: null,
+          screenplay: null,
+        },
+      },
     });
     
-    // WorkerBridge will handle the actual generation
-    // This is called from the UI, which will also call workerBridge.generateScreenplay()
     console.log('[DirectorStore] Starting screenplay generation for:', prompt.substring(0, 50));
   },
 
   // Step 1: Start generating images only
   startImageGeneration: () => {
-    const { screenplay } = get();
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    const screenplay = project?.screenplay;
     if (!screenplay) {
       console.error('[DirectorStore] No screenplay to generate images');
       return;
     }
     
-    set({ screenplayStatus: 'generating_images' });
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...project,
+          screenplayStatus: 'generating_images',
+        },
+      },
+    });
     
-    // Initialize progress for all scenes (image stage)
     const progressMap = new Map<number, SceneProgress>();
     for (const scene of screenplay.scenes) {
       progressMap.set(scene.sceneId, {
@@ -1483,15 +1741,25 @@ export const useDirectorStore = create<DirectorStore>()(
   
   // Step 2: Start generating videos from confirmed images
   startVideoGeneration: () => {
-    const { screenplay, sceneProgress } = get();
+    const { activeProjectId, projects, sceneProgress } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    const screenplay = project?.screenplay;
     if (!screenplay) {
       console.error('[DirectorStore] No screenplay to generate videos');
       return;
     }
     
-    set({ screenplayStatus: 'generating_videos' });
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...project,
+          screenplayStatus: 'generating_videos',
+        },
+      },
+    });
     
-    // Update progress for video stage (keep existing imageUrl)
     const progressMap = new Map<number, SceneProgress>();
     for (const scene of screenplay.scenes) {
       const existing = sceneProgress.get(scene.sceneId);
@@ -1499,7 +1767,7 @@ export const useDirectorStore = create<DirectorStore>()(
         sceneId: scene.sceneId,
         status: 'pending',
         stage: 'video',
-        progress: 50, // Start at 50% since image is done
+        progress: 50,
         imageUrl: existing?.imageUrl,
       });
     }
@@ -1531,12 +1799,21 @@ export const useDirectorStore = create<DirectorStore>()(
   },
 
   cancelAll: () => {
-    set({ 
-      screenplayStatus: get().screenplay ? 'ready' : 'idle',
-    });
+    const { activeProjectId, projects, sceneProgress } = get();
+    if (activeProjectId) {
+      const project = projects[activeProjectId];
+      const screenplay = project?.screenplay;
+      set({
+        projects: {
+          ...projects,
+          [activeProjectId]: {
+            ...project,
+            screenplayStatus: screenplay ? 'ready' : 'idle',
+          },
+        },
+      });
+    }
     
-    // Mark all generating scenes as failed
-    const { sceneProgress } = get();
     for (const [sceneId, progress] of sceneProgress) {
       if (progress.status === 'generating' || progress.status === 'pending') {
         get().updateSceneProgress(sceneId, {
@@ -1553,10 +1830,18 @@ export const useDirectorStore = create<DirectorStore>()(
 
   // Worker callbacks
   onScreenplayGenerated: (screenplay) => {
-    set({ 
-      screenplay, 
-      screenplayStatus: 'ready',
-      screenplayError: null,
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...projects[activeProjectId],
+          screenplay,
+          screenplayStatus: 'ready',
+          screenplayError: null,
+        },
+      },
     });
     console.log('[DirectorStore] Screenplay generated:', screenplay.title);
   },
@@ -1567,23 +1852,20 @@ export const useDirectorStore = create<DirectorStore>()(
 
   // Called when a scene's image is generated
   onSceneImageCompleted: (sceneId, imageUrl) => {
-    // In image-only mode, 100% means image is done
-    // Progress will be reset to 50% when video generation starts
     get().updateSceneProgress(sceneId, {
       status: 'completed',
       stage: 'image',
-      progress: 100, // 100% for image generation step
+      progress: 100,
       imageUrl,
     });
     
-    // Update scene with imageUrl
-    const { screenplay } = get();
+    const { activeProjectId, projects, sceneProgress } = get();
+    const project = activeProjectId ? projects[activeProjectId] : null;
+    const screenplay = project?.screenplay;
     if (screenplay) {
       get().updateScene(sceneId, { imageUrl });
     }
     
-    // Check if all images are done
-    const { sceneProgress } = get();
     if (screenplay) {
       const allImagesDone = screenplay.scenes.every(scene => {
         const progress = sceneProgress.get(scene.sceneId);
@@ -1607,8 +1889,9 @@ export const useDirectorStore = create<DirectorStore>()(
       completedAt: Date.now(),
     });
     
-    // Check if all scenes are done
-    const { sceneProgress, screenplay } = get();
+    const { activeProjectId, projects, sceneProgress } = get();
+    const project = activeProjectId ? projects[activeProjectId] : null;
+    const screenplay = project?.screenplay;
     if (screenplay) {
       const allDone = screenplay.scenes.every(scene => {
         const progress = sceneProgress.get(scene.sceneId);
@@ -1633,16 +1916,36 @@ export const useDirectorStore = create<DirectorStore>()(
 
   // All images generated, ready for user review
   onAllImagesCompleted: () => {
-    set({ screenplayStatus: 'images_ready' });
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...projects[activeProjectId],
+          screenplayStatus: 'images_ready',
+        },
+      },
+    });
     console.log('[DirectorStore] All images completed, ready for review');
   },
 
   onAllCompleted: () => {
-    set({ screenplayStatus: 'completed' });
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: {
+          ...projects[activeProjectId],
+          screenplayStatus: 'completed',
+        },
+      },
+    });
     console.log('[DirectorStore] All scenes completed');
   },
   
-  // ========== 预告片功能实现 ==========
+  // ========== 棰勫憡鐗囧姛鑳藉疄鐜?==========
   
   setTrailerDuration: (duration) => {
     const { activeProjectId, projects } = get();
@@ -1724,7 +2027,81 @@ export const useDirectorStore = create<DirectorStore>()(
     console.log('[DirectorStore] Trailer cleared');
   },
   
-  // ========== 摄影风格档案 ==========
+  // ========== 瑙嗛鎴抚鈫掗甯х骇鑱旇縼绉?==========
+  
+  cascadeFramesToNextScene: (params) => {
+    const { activeProjectId, projects } = get();
+    if (!activeProjectId) return;
+    const project = projects[activeProjectId];
+    const {
+      nextSceneId,
+      origFirstFrameImage,
+      origFirstFrameHttpUrl,
+      origFirstFramePrompt,
+      origFirstFramePromptZh,
+      newFirstFrameImage,
+      newFirstFrameHttpUrl,
+      newFirstFramePrompt,
+      newFirstFramePromptZh,
+    } = params;
+    
+    const updated = project.splitScenes.map(scene => {
+      if (scene.id !== nextSceneId) return scene;
+      
+      // 鍘熼甯ф湁鍐呭鎵嶈縼绉诲埌灏惧抚
+      const hasOrigImage = !!origFirstFrameImage;
+      
+      // 灏惧抚鎻愮ず璇嶄繚鎶わ細浠呭綋涓虹┖鏃跺啓鍏?
+      const endPrompt = scene.endFramePrompt || origFirstFramePrompt;
+      const endPromptZh = scene.endFramePromptZh || origFirstFramePromptZh;
+      
+      // 瑙嗛杩囨湡澶勭悊锛氳嫢宸叉湁瑙嗛锛岄噸缃?
+      const videoReset = scene.videoUrl ? {
+        videoStatus: 'idle' as const,
+        videoProgress: 0,
+        videoUrl: null,
+        videoError: null,
+        videoMediaId: null,
+      } : {};
+      
+      return {
+        ...scene,
+        // 灏惧抚锛氬師棣栧抚杩佺Щ杩囨潵
+        ...(hasOrigImage ? {
+          endFrameImageUrl: origFirstFrameImage,
+          endFrameHttpUrl: origFirstFrameHttpUrl,
+          endFrameSource: 'prev-scene-cascade' as const,
+          endFrameStatus: 'completed' as const,
+          endFrameProgress: 100,
+          endFrameError: null,
+        } : {}),
+        endFramePrompt: endPrompt,
+        endFramePromptZh: endPromptZh,
+        needsEndFrame: true,
+        // 棣栧抚锛氳棰戞埅鍙栧抚
+        imageDataUrl: newFirstFrameImage,
+        imageHttpUrl: newFirstFrameHttpUrl,
+        imagePrompt: newFirstFramePrompt,
+        imagePromptZh: newFirstFramePromptZh,
+        imageStatus: 'completed' as const,
+        imageProgress: 100,
+        imageError: null,
+        // 瑙嗛杩囨湡閲嶇疆
+        ...videoReset,
+      };
+    });
+    
+    set({
+      projects: {
+        ...projects,
+        [activeProjectId]: { ...project, splitScenes: updated },
+      },
+    });
+    
+    console.log('[DirectorStore] Cascade frames to next scene:', nextSceneId);
+  },
+
+  // ========== 鎽勫奖椋庢牸妗ｆ ==========
   
   setCinematographyProfileId: (profileId) => {
     const { activeProjectId, projects } = get();
@@ -1788,7 +2165,15 @@ export const useDirectorStore = create<DirectorStore>()(
         
         // Legacy format: has `projects` as Record (from old monolithic file)
         if (persisted.projects && typeof persisted.projects === 'object') {
-          return { ...current, ...persisted };
+          const normalizedProjects: Record<string, DirectorProjectData> = {};
+          for (const [projectId, projectData] of Object.entries(persisted.projects)) {
+            normalizedProjects[projectId] = normalizeDirectorProjectData(projectData);
+          }
+          return {
+            ...current,
+            ...persisted,
+            projects: normalizedProjects,
+          };
         }
         
         // New per-project format: has `projectData` for single project
@@ -1797,7 +2182,7 @@ export const useDirectorStore = create<DirectorStore>()(
         if (config) updates.config = config;
         if (pid) updates.activeProjectId = pid;
         if (pid && projectData) {
-          updates.projects = { ...current.projects, [pid]: projectData };
+          updates.projects = { ...current.projects, [pid]: normalizeDirectorProjectData(projectData) };
         }
         return updates;
       },
@@ -1829,7 +2214,9 @@ export const useSceneProgress = (sceneId: number): SceneProgress | undefined => 
  */
 export const useOverallProgress = (): number => {
   return useDirectorStore((state) => {
-    const { screenplay, sceneProgress } = state;
+    const project = state.activeProjectId ? state.projects[state.activeProjectId] : null;
+    const screenplay = project?.screenplay || null;
+    const { sceneProgress } = state;
     if (!screenplay || screenplay.scenes.length === 0) return 0;
     
     let total = 0;
@@ -1878,3 +2265,5 @@ export const useFailedScenesCount = (): number => {
     return count;
   });
 };
+
+

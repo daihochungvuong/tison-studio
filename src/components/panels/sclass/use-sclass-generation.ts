@@ -109,7 +109,10 @@ export function useSClassGeneration() {
 
       for (let i = 0; i < refs.length; i++) {
         const ref = refs[i];
-        const httpUrl = ref.httpUrl || (await convertToHttpUrl(ref.localUrl));
+        const httpUrl = await convertToHttpUrl(ref.localUrl, {
+          fallbackHttpUrl: ref.httpUrl,
+          uploadName: ref.fileName,
+        });
         if (httpUrl) {
           // 第一张图作为 first_frame，其余作为 last_frame
           imageWithRoles.push({
@@ -160,7 +163,15 @@ export function useSClassGeneration() {
         };
       }
 
-      const apiKey = featureConfig.keyManager.getCurrentKey() || "";
+      const keyManager = featureConfig.keyManager;
+      if (!keyManager.getCurrentKey()) {
+        return {
+          groupId: group.id,
+          success: false,
+          videoUrl: null,
+          error: "请先在设置中配置视频生成 API Key",
+        };
+      }
       const sclassProjectData = getProjectData(projectId);
       const sclassConfig = sclassProjectData.config;
 
@@ -338,27 +349,74 @@ export function useSClassGeneration() {
           videoResolution,
         });
 
-        const videoUrl = await callVideoGenerationApi(
-          apiKey,
-          prompt,
-          duration,
-          aspectRatio,
-          imageWithRoles,
-          (progress) => {
-            const mappedProgress = 10 + Math.floor(progress * 0.85);
-            updateGroupVideoStatus(group.id, {
-              videoProgress: mappedProgress,
-            });
-            options?.onProgress?.(mappedProgress);
-          },
-          featureConfig.keyManager,
-          featureConfig.platform,
-          videoResolution,
-          videoRefUrls.length > 0 ? videoRefUrls : undefined,
-          audioRefUrls.length > 0 ? audioRefUrls : undefined,
-          enableAudio,
-          allStaticCamera,
-        );
+        const maxVideoAttempts = Math.max(1, Math.min(keyManager.getTotalKeyCount(), 6));
+        let videoUrl: string | null = null;
+        let lastVideoError: Error | null = null;
+
+        for (let attempt = 0; attempt < maxVideoAttempts; attempt++) {
+          const currentApiKey = keyManager.getCurrentKey() || "";
+          if (!currentApiKey) break;
+
+          try {
+            videoUrl = await callVideoGenerationApi(
+              currentApiKey,
+              prompt,
+              duration,
+              aspectRatio,
+              imageWithRoles,
+              (progress) => {
+                const mappedProgress = 10 + Math.floor(progress * 0.85);
+                updateGroupVideoStatus(group.id, {
+                  videoProgress: mappedProgress,
+                });
+                options?.onProgress?.(mappedProgress);
+              },
+              keyManager,
+              featureConfig.platform,
+              videoResolution,
+              videoRefUrls.length > 0 ? videoRefUrls : undefined,
+              audioRefUrls.length > 0 ? audioRefUrls : undefined,
+              enableAudio,
+              allStaticCamera,
+            );
+            lastVideoError = null;
+            break;
+          } catch (error) {
+            const err = error as Error & { status?: number };
+            lastVideoError = err;
+            const message = err.message || "";
+            const statusMatch = message.match(/\b(4\d\d|5\d\d)\b/);
+            const parsedStatus = typeof err.status === "number"
+              ? err.status
+              : (statusMatch ? Number(statusMatch[1]) : undefined);
+            const alreadyRotatedByInner = typeof err.status === "number"
+              && [400, 401, 403, 429, 500, 502, 503, 529].includes(err.status);
+            const fallbackStatus = /model|模型/i.test(message)
+              && /not support|unsupported|无权限|权限不足|未开通|不可用/i.test(message)
+              ? 400
+              : undefined;
+            const statusForHandle = parsedStatus ?? fallbackStatus;
+            const rotated = alreadyRotatedByInner
+              ? true
+              : (typeof statusForHandle === "number" ? keyManager.handleError(statusForHandle, message) : false);
+            const retryableByMessage = /429|500|502|503|529|too many requests|rate|quota|service unavailable|overloaded|internal server error|server error|上游负载|上游服务|饱和|暂时不可用|服务暂时不可用|api key|无效|过期|model|模型|不支持|权限|未开通/.test(message.toLowerCase());
+            const canRetry = attempt < maxVideoAttempts - 1 && (rotated || retryableByMessage);
+
+            if (canRetry) {
+              console.warn(`[SClassGen] Group video retry with next key (${attempt + 1}/${maxVideoAttempts})`, {
+                groupId: group.id,
+                status: statusForHandle,
+                message: message.substring(0, 160),
+              });
+              continue;
+            }
+            throw err;
+          }
+        }
+
+        if (!videoUrl) {
+          throw lastVideoError || new Error("视频生成失败：没有可用 API Key");
+        }
 
         // 7. 保存视频到本地
         const localUrl = await saveVideoLocally(
@@ -550,7 +608,11 @@ export function useSClassGeneration() {
         return false;
       }
 
-      const apiKey = featureConfig.keyManager.getCurrentKey() || "";
+      const keyManager = featureConfig.keyManager;
+      if (!keyManager.getCurrentKey()) {
+        toast.error("请先在设置中配置视频生成 API Key");
+        return false;
+      }
       const projectId = activeProjectId;
       if (!projectId) return false;
 
@@ -581,19 +643,66 @@ export function useSClassGeneration() {
           `分镜 ${scene.id + 1} 视频`;
         const duration = Math.max(4, Math.min(15, scene.duration || 5));
 
-        const videoUrl = await callVideoGenerationApi(
-          apiKey,
-          prompt,
-          duration,
-          singleAspectRatio,
-          imageWithRoles,
-          (progress) => {
-            updateSingleShotVideo(sceneId, { videoProgress: progress });
-          },
-          featureConfig.keyManager,
-          featureConfig.platform,
-          singleVideoRes
-        );
+        const maxVideoAttempts = Math.max(1, Math.min(keyManager.getTotalKeyCount(), 6));
+        let videoUrl: string | null = null;
+        let lastVideoError: Error | null = null;
+
+        for (let attempt = 0; attempt < maxVideoAttempts; attempt++) {
+          const currentApiKey = keyManager.getCurrentKey() || "";
+          if (!currentApiKey) break;
+
+          try {
+            videoUrl = await callVideoGenerationApi(
+              currentApiKey,
+              prompt,
+              duration,
+              singleAspectRatio,
+              imageWithRoles,
+              (progress) => {
+                updateSingleShotVideo(sceneId, { videoProgress: progress });
+              },
+              keyManager,
+              featureConfig.platform,
+              singleVideoRes
+            );
+            lastVideoError = null;
+            break;
+          } catch (error) {
+            const err = error as Error & { status?: number };
+            lastVideoError = err;
+            const message = err.message || "";
+            const statusMatch = message.match(/\b(4\d\d|5\d\d)\b/);
+            const parsedStatus = typeof err.status === "number"
+              ? err.status
+              : (statusMatch ? Number(statusMatch[1]) : undefined);
+            const alreadyRotatedByInner = typeof err.status === "number"
+              && [400, 401, 403, 429, 500, 502, 503, 529].includes(err.status);
+            const fallbackStatus = /model|模型/i.test(message)
+              && /not support|unsupported|无权限|权限不足|未开通|不可用/i.test(message)
+              ? 400
+              : undefined;
+            const statusForHandle = parsedStatus ?? fallbackStatus;
+            const rotated = alreadyRotatedByInner
+              ? true
+              : (typeof statusForHandle === "number" ? keyManager.handleError(statusForHandle, message) : false);
+            const retryableByMessage = /429|500|502|503|529|too many requests|rate|quota|service unavailable|overloaded|internal server error|server error|上游负载|上游服务|饱和|暂时不可用|服务暂时不可用|api key|无效|过期|model|模型|不支持|权限|未开通/.test(message.toLowerCase());
+            const canRetry = attempt < maxVideoAttempts - 1 && (rotated || retryableByMessage);
+
+            if (canRetry) {
+              console.warn(`[SClassGen] Single shot retry with next key (${attempt + 1}/${maxVideoAttempts})`, {
+                sceneId,
+                status: statusForHandle,
+                message: message.substring(0, 160),
+              });
+              continue;
+            }
+            throw err;
+          }
+        }
+
+        if (!videoUrl) {
+          throw lastVideoError || new Error("视频生成失败：没有可用 API Key");
+        }
 
         const localUrl = await saveVideoLocally(videoUrl, sceneId);
 
@@ -700,7 +809,7 @@ export function useSClassGeneration() {
         name: `${sourceGroup.name} - 延长`,
         sceneIds: [...sourceGroup.sceneIds],
         sortIndex: sourceGroup.sortIndex + 0.5,
-        totalDuration: Math.max(4, Math.min(15, extendDuration)),
+        totalDuration: Math.max(4, Math.min(15, extendDuration)) as ShotGroup["totalDuration"],
         videoStatus: 'idle',
         videoProgress: 0,
         videoUrl: null,
@@ -708,14 +817,15 @@ export function useSClassGeneration() {
         videoError: null,
         gridImageUrl: null,
         lastPrompt: null,
-        mergedPrompt: description || null,
+        mergedPrompt: description || sourceGroup.mergedPrompt || "",
         history: [],
+        imageRefs: [],
         videoRefs: [],
         audioRefs: [],
         generationType: 'extend',
         extendDirection: direction,
         sourceGroupId,
-        sourceVideoUrl: sourceGroup.videoUrl,
+        sourceVideoUrl: sourceGroup.videoUrl || undefined,
       };
 
       addShotGroup(childGroup);

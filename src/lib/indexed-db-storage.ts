@@ -18,6 +18,7 @@ declare global {
       removeItem: (key: string) => Promise<boolean>;
       exists: (key: string) => Promise<boolean>;
       listKeys: (prefix: string) => Promise<string[]>;
+      listDirs: (prefix: string) => Promise<string[]>;
       removeDir: (prefix: string) => Promise<boolean>;
     };
   }

@@ -124,6 +124,8 @@ export interface ShotGroup {
   sceneIds: number[];
   /** 组内总时长限制（≤15s） */
   totalDuration: SClassDuration;
+  /** @图片引用 */
+  imageRefs: AssetRef[];
   /** @视频引用 */
   videoRefs: AssetRef[];
   /** @音频引用 */
@@ -214,6 +216,7 @@ export interface SClassProjectData {
   lastGridImageUrl: string | null;
   /** lastGridImageUrl 对应的分镜 ID 列表（用于判断是否可复用） */
   lastGridSceneIds: number[] | null;
+  editorPrefs: SClassEditorPrefs;
 }
 
 /** S级生成配置（共享配置 aspectRatio/resolution 已统一由 director-store 管理） */
@@ -221,6 +224,15 @@ export interface SClassConfig {
   defaultDuration: SClassDuration;
   /** 生成并发数 */
   concurrency: number;
+}
+
+export interface SClassEditorPrefs {
+  imageGenMode: 'single' | 'merged';
+  frameMode: 'first' | 'last' | 'both';
+  refStrategy: 'cluster' | 'minimal' | 'none';
+  useExemplar: boolean;
+  activeTab: 'editing' | 'trailer';
+  episodeViewScope: 'all' | 'episode';
 }
 
 // ==================== Store ====================
@@ -267,6 +279,7 @@ interface SClassActions {
 
   // 配置
   updateConfig: (config: Partial<SClassConfig>) => void;
+  setEditorPrefs: (prefs: Partial<SClassEditorPrefs>) => void;
 
   // 九宫格缓存
   setLastGridImage: (url: string | null, sceneIds: number[] | null) => void;
@@ -290,6 +303,15 @@ const defaultConfig: SClassConfig = {
   concurrency: 1,
 };
 
+const defaultEditorPrefs: SClassEditorPrefs = {
+  imageGenMode: 'merged',
+  frameMode: 'first',
+  refStrategy: 'cluster',
+  useExemplar: true,
+  activeTab: 'editing',
+  episodeViewScope: 'episode',
+};
+
 const defaultProjectData = (): SClassProjectData => ({
   shotGroups: [],
   singleShotOverrides: {},
@@ -299,6 +321,7 @@ const defaultProjectData = (): SClassProjectData => ({
   hasAutoGrouped: false,
   lastGridImageUrl: null,
   lastGridSceneIds: null,
+  editorPrefs: { ...defaultEditorPrefs },
 });
 
 const initialState: SClassState = {
@@ -314,6 +337,22 @@ const initialState: SClassState = {
 const getCurrentProject = (state: SClassState): SClassProjectData | null => {
   if (!state.activeProjectId) return null;
   return state.projects[state.activeProjectId] || null;
+};
+
+const normalizeProjectData = (project: any): SClassProjectData => {
+  const defaults = defaultProjectData();
+  return {
+    ...defaults,
+    ...project,
+    config: {
+      ...defaults.config,
+      ...(project?.config || {}),
+    },
+    editorPrefs: {
+      ...defaultEditorPrefs,
+      ...(project?.editorPrefs || {}),
+    },
+  };
 };
 
 // ==================== Store ====================
@@ -413,11 +452,11 @@ export const useSClassStore = create<SClassStore>()(
         const { activeProjectId, projects } = get();
         if (!activeProjectId) return;
         const project = projects[activeProjectId];
-        const groupMap = new Map(project.shotGroups.map((g) => [g.id, g]));
+        const groupMap = new Map<string, ShotGroup>(project.shotGroups.map((g) => [g.id, g]));
         const reordered = groupIds
           .map((id, idx) => {
             const g = groupMap.get(id);
-            return g ? { ...g, sortIndex: idx } : null;
+            return g ? { ...(g as ShotGroup), sortIndex: idx } : null;
           })
           .filter(Boolean) as ShotGroup[];
         set({
@@ -606,11 +645,13 @@ export const useSClassStore = create<SClassStore>()(
                   g.id === groupId
                     ? {
                         ...g,
-                        ...(asset.type === 'video'
-                          ? { videoRefs: [...g.videoRefs, asset] }
-                          : asset.type === 'audio'
-                            ? { audioRefs: [...g.audioRefs, asset] }
-                            : g),
+                        ...(asset.type === 'image'
+                          ? { imageRefs: [...(g.imageRefs || []), asset] }
+                          : asset.type === 'video'
+                            ? { videoRefs: [...g.videoRefs, asset] }
+                            : asset.type === 'audio'
+                              ? { audioRefs: [...g.audioRefs, asset] }
+                              : g),
                       }
                     : g
                 ),
@@ -646,6 +687,7 @@ export const useSClassStore = create<SClassStore>()(
                   g.id === groupId
                     ? {
                         ...g,
+                        imageRefs: (g.imageRefs || []).filter((r) => r.id !== assetId),
                         videoRefs: g.videoRefs.filter((r) => r.id !== assetId),
                         audioRefs: g.audioRefs.filter((r) => r.id !== assetId),
                       }
@@ -679,6 +721,24 @@ export const useSClassStore = create<SClassStore>()(
             [activeProjectId]: {
               ...project,
               config: { ...project.config, ...configUpdates },
+            },
+          },
+        });
+      },
+
+      setEditorPrefs: (prefs) => {
+        const { activeProjectId, projects } = get();
+        if (!activeProjectId) return;
+        const project = projects[activeProjectId];
+        set({
+          projects: {
+            ...projects,
+            [activeProjectId]: {
+              ...project,
+              editorPrefs: {
+                ...(project?.editorPrefs || defaultEditorPrefs),
+                ...prefs,
+              },
             },
           },
         });
@@ -762,8 +822,16 @@ export const useSClassStore = create<SClassStore>()(
           return clean;
         };
         const migrateProjectData = (pd: any) => {
-          if (!pd || !pd.config) return pd;
-          return { ...pd, config: migrateConfig(pd.config) };
+          if (!pd) return normalizeProjectData(pd);
+          const normalized = normalizeProjectData(pd);
+          return {
+            ...normalized,
+            config: migrateConfig(normalized.config),
+            editorPrefs: {
+              ...defaultEditorPrefs,
+              ...(normalized.editorPrefs || {}),
+            },
+          };
         };
 
         // Legacy format

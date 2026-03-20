@@ -47,6 +47,7 @@ export interface CharacterVariation {
   visualPrompt: string;   // Prompt describing this variation
   visualPromptZh?: string; // 中文提示词
   referenceImage?: string; // Generated reference image for this variation
+  clothingReferenceImages?: string[]; // User-uploaded clothing/outfit reference images (base64)
   generatedAt?: number;
   
   // === 阶段变体特有字段 ===
@@ -381,6 +382,16 @@ export const useCharacterLibraryStore = create<CharacterLibraryStore>()(
             };
           }),
         }));
+        // Debug: verify update took effect
+        const updated = get().characters.find(c => c.id === characterId);
+        const updatedVar = updated?.variations?.find(v => v.id === variationId);
+        console.log('[CharStore] updateVariation →', {
+          charId: characterId.substring(0, 12),
+          varId: variationId.substring(0, 12),
+          hasRef: !!updatedVar?.referenceImage,
+          ref: updatedVar?.referenceImage?.substring(0, 40),
+          totalVars: updated?.variations?.length,
+        });
       },
 
       deleteVariation: (characterId, variationId) => {
@@ -462,10 +473,36 @@ export const useCharacterLibraryStore = create<CharacterLibraryStore>()(
             imageUrl: view.imageUrl,
             generatedAt: view.generatedAt,
           })),
+          // For variations, explicitly pick fields (same pattern as views above).
+          // This avoids persisting non-serializable data or oversized base64.
+          variations: (char.variations || []).map((v: CharacterVariation) => ({
+            id: v.id,
+            name: v.name,
+            visualPrompt: v.visualPrompt,
+            visualPromptZh: v.visualPromptZh,
+            referenceImage: v.referenceImage,
+            generatedAt: v.generatedAt,
+            // Stage variation fields
+            isStageVariation: v.isStageVariation,
+            episodeRange: v.episodeRange,
+            ageDescription: v.ageDescription,
+            stageDescription: v.stageDescription,
+            // clothingReferenceImages: intentionally excluded (base64, recreated at runtime)
+          })),
         })),
       }),
       merge: (persisted: any, current: any) => {
         if (!persisted) return current;
+        // Debug: log variations in persisted data to trace persistence issues
+        if (persisted.characters?.length) {
+          const varSummary = persisted.characters.map((c: any) => ({
+            name: c.name,
+            pid: c.projectId?.substring(0, 8),
+            vars: (c.variations || []).length,
+            varNames: (c.variations || []).map((v: any) => v.name),
+          }));
+          console.log('[CharStore] merge: persisted characters →', JSON.stringify(varSummary));
+        }
         return {
           ...current,
           folders: persisted.folders ?? current.folders,
@@ -477,7 +514,13 @@ export const useCharacterLibraryStore = create<CharacterLibraryStore>()(
         if (error) {
           console.error('Failed to rehydrate character library:', error);
         } else if (state) {
-          console.log(`Character library loaded: ${state.characters?.length || 0} characters`);
+          const varSummary = state.characters?.map((c) => ({
+            name: c.name,
+            vars: (c.variations || []).length,
+            varNames: (c.variations || []).map((v) => v.name),
+            varRefs: (c.variations || []).map((v) => v.referenceImage ? '✓' : '✗'),
+          }));
+          console.log(`[CharStore] rehydrated: ${state.characters?.length || 0} chars →`, JSON.stringify(varSummary));
         }
         // Migrate old data from localStorage to IndexedDB
         migrateFromLocalStorage('moyin-character-library');

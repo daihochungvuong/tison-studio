@@ -73,33 +73,47 @@ const RETRY_BASE_DELAY = 3000;
 // ==================== Retry Logic ====================
 
 /**
- * Check if an error is retryable (429 rate limit OR 503 service unavailable)
+ * Check if an error is retryable (rate limit / service unavailable / upstream overload)
  */
 function isRetryableError(error: unknown): boolean {
   if (!error) return false;
   const err = error as any;
-  // Check status code
-  if (err.status === 429 || err.status === 503) return true;
-  if (err.code === 429 || err.code === 503) return true;
-  // Check error message
+  if (err.status === 429 || err.status === 500 || err.status === 502 || err.status === 503 || err.status === 529) return true;
+  if (err.code === 429 || err.code === 500 || err.code === 502 || err.code === 503 || err.code === 529) return true;
   const message = (err.message || '').toLowerCase();
   return (
     message.includes('429') ||
+    message.includes('500') ||
+    message.includes('502') ||
     message.includes('503') ||
+    message.includes('529') ||
     message.includes('rate') ||
     message.includes('quota') ||
     message.includes('too many requests') ||
     message.includes('service unavailable') ||
-    message.includes('temporarily unavailable')
+    message.includes('temporarily unavailable') ||
+    message.includes('internal server error') ||
+    message.includes('overloaded') ||
+    message.includes('上游负载') ||
+    message.includes('上游服务') ||
+    message.includes('饱和') ||
+    message.includes('负载已满') ||
+    message.includes('暂时不可用') ||
+    message.includes('服务暂时不可用') ||
+    message.includes('无可用渠道') ||
+    message.includes('no available channel') ||
+    message.includes('server error')
   );
 }
 
 /**
- * Retry an operation with exponential backoff for retryable errors
+ * Retry an operation with exponential backoff for retryable errors.
+ * 支持 keyManager：遇到可重试错误时先触发 key 轮换，下次重试自动使用新 key。
  */
 async function freedomRetry<T>(
   operation: () => Promise<T>,
-  label: string
+  label: string,
+  keyManager?: { handleError: (status: number, errorText?: string) => boolean } | null,
 ): Promise<T> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
@@ -108,6 +122,16 @@ async function freedomRetry<T>(
     } catch (error) {
       lastError = error as Error;
       if (!isRetryableError(error)) throw error;
+
+      // 触发 key 轮换（如果有 keyManager）
+      const errStatus = (error as any)?.status;
+      if (keyManager && typeof errStatus === 'number') {
+        const rotated = keyManager.handleError(errStatus);
+        if (rotated) {
+          console.log(`[Freedom] ${label}: key rotated due to ${errStatus}`);
+        }
+      }
+
       if (attempt < RETRY_MAX_ATTEMPTS - 1) {
         const delay = RETRY_BASE_DELAY * Math.pow(2, attempt);
         console.warn(
@@ -137,7 +161,11 @@ function pickFeatureConfig(feature: AIFeature, requestedModel?: string): Feature
   const all = getAllFeatureConfigs(feature);
   if (all.length === 0) return null;
   if (requestedModel) {
-    return all.find((c) => c.model === requestedModel) ?? null;
+    const exact = all.find((c) => c.model === requestedModel);
+    if (exact) return exact;
+    // UI 展开的变体模型（如 gemini-3.1-pro 从绑定的 gemini-3-pro 展开而来）不会
+    // 精确匹配到任何 config.model，此时回退到轮询配置而非返回 null，
+    // 避免用户选了可用变体却报"未配置"错误
   }
   return getFeatureConfig(feature) ?? all[0];
 }
@@ -199,6 +227,7 @@ const FREEDOM_VIDEO_ROUTE_MAP: Record<string, FreedomVideoRoute> = {
   '数字人': 'kling',
   '对口型': 'kling',
   '视频特效': 'kling',
+  'openai': 'unified', // 某些自定义供应商把视频模型标为通用 openai
   '视频统一格式': 'unified',
   'grok视频': 'unified',
   'openai-response': 'unified',
@@ -215,6 +244,53 @@ const FREEDOM_VIDEO_ROUTE_MAP: Record<string, FreedomVideoRoute> = {
   'vidu首尾帧': 'unified',
   'luma视频延长': 'unified',  // luma extend uses 延长 (file 04 naming)
 };
+
+/**
+ * 统一格式端点路径映射（端点类型 → 提交/轮询 URL 路径）
+ * 每种端点类型直接对应确定的 URL，不再靠 fallback 猜测
+ */
+const UNIFIED_ENDPOINT_PATHS: Record<string, { submit: string; poll: (id: string) => string }> = {
+  // 路径均为域名根起的绝对路径（不依赖 /v1/ 前缀拼接）
+  'grok视频':     { submit: '/v1/video/create',      poll: (id) => `/v1/video/query?id=${id}` },
+  '视频统一格式': { submit: '/v1/video/create',      poll: (id) => `/v1/video/query?id=${id}` },
+  '海螺视频生成': { submit: '/minimax/v1/video_generation', poll: (id) => `/minimax/v1/query/video_generation?task_id=${id}` },
+  'luma视频生成': { submit: '/luma/generations',            poll: (id) => `/luma/generations/${id}` },
+  'luma视频扩展': { submit: '/luma/generations',            poll: (id) => `/luma/generations/${id}` },
+  'luma视频延长': { submit: '/luma/generations',            poll: (id) => `/luma/generations/${id}` },
+  'runway图生视频': { submit: '/runwayml/v1/image_to_video', poll: (id) => `/runwayml/v1/tasks/${id}` },
+  'wan视频生成':    { submit: '/alibailian/api/v1/services/aigc/video-generation/video-synthesis', poll: (id) => `/alibailian/api/v1/tasks/${id}` },
+  'aigc-video':    { submit: '/tencent-vod/v1/aigc-video', poll: (id) => `/tencent-vod/v1/aigc-video/${id}` },
+  // Vidu 企业版端点 (/ent/v2/)
+  'vidu文生视频':   { submit: '/ent/v2/text2video',       poll: (id) => `/ent/v2/task?task_id=${id}` },
+  'vidu图生视频':   { submit: '/ent/v2/img2video',        poll: (id) => `/ent/v2/task?task_id=${id}` },
+  'vidu参考生视频': { submit: '/ent/v2/reference2video',  poll: (id) => `/ent/v2/task?task_id=${id}` },
+  'vidu首尾帧':     { submit: '/ent/v2/start-end2video',  poll: (id) => `/ent/v2/task?task_id=${id}` },
+};
+const DEFAULT_UNIFIED_ENDPOINT = { submit: '/v1/video/generations', poll: (id: string) => `/v1/video/generations/${id}` };
+
+/**
+ * 图片端点路径映射（端点类型 → 提交/轮询 URL 路径）
+ * 仅用于需要自定义路径的端点类型，其余走默认 /v1/images/generations
+ */
+const IMAGE_ENDPOINT_PATHS: Record<string, { submit: string; poll: (id: string) => string }> = {
+  'aigc-image': { submit: '/tencent-vod/v1/aigc-image', poll: (id) => `/tencent-vod/v1/aigc-image/${id}` },
+  'vidu生图':   { submit: '/ent/v2/reference2image',    poll: (id) => `/ent/v2/task?task_id=${id}` },
+};
+const DEFAULT_IMAGE_ENDPOINT = { submit: '/v1/images/generations', poll: (id: string) => `/v1/images/generations/${id}` };
+
+function getImageEndpointPaths(endpointTypes: string[]): { submit: string; poll: (id: string) => string } {
+  for (const t of endpointTypes) {
+    if (IMAGE_ENDPOINT_PATHS[t]) return IMAGE_ENDPOINT_PATHS[t];
+  }
+  return DEFAULT_IMAGE_ENDPOINT;
+}
+
+function getUnifiedEndpointPaths(endpointTypes: string[]): { submit: string; poll: (id: string) => string } {
+  for (const t of endpointTypes) {
+    if (UNIFIED_ENDPOINT_PATHS[t]) return UNIFIED_ENDPOINT_PATHS[t];
+  }
+  return DEFAULT_UNIFIED_ENDPOINT;
+}
 
 function detectFreedomVideoRoute(model: string, endpointTypes?: string[]): FreedomVideoRoute {
   if (endpointTypes && endpointTypes.length > 0) {
@@ -251,7 +327,8 @@ function detectFreedomVideoRoute(model: string, endpointTypes?: string[]): Freed
 export async function generateFreedomImage(
   params: FreedomImageParams
 ): Promise<GenerationResult> {
-  return freedomRetry(() => _generateFreedomImageInner(params), 'Image generation');
+  const { config } = resolveFreedomFeatureConfig('freedom_image', 'character_generation', params.model);
+  return freedomRetry(() => _generateFreedomImageInner(params), 'Image generation', config?.keyManager);
 }
 
 async function _generateFreedomImageInner(
@@ -269,7 +346,9 @@ async function _generateFreedomImageInner(
   }
   console.log(`[Freedom] Image config source: ${configSource}`);
 
-  const { apiKey, baseUrl, model: defaultModel } = config;
+  const { baseUrl, model: defaultModel } = config;
+  // 每次重试动态取当前 key（利用 keyManager rotate 后的新 key）
+  const apiKey = config.keyManager?.getCurrentKey?.() || config.apiKey;
   // 模型 ID 直接透传：UI 选的就是供应商原始 ID，无需转换
   const model = params.model || defaultModel;
   const normalizedBase = baseUrl.replace(/\/+$/, '');
@@ -299,7 +378,7 @@ async function _generateFreedomImageInner(
   if (route === 'replicate') {
     return await generateViaReplicateImageEndpoint(params, model, apiKey, normalizedBase);
   }
-  return await generateViaImagesEndpoint(params, model, apiKey, normalizedBase);
+  return await generateViaImagesEndpoint(params, model, apiKey, normalizedBase, endpointTypes);
 }
 
 /**
@@ -339,7 +418,7 @@ async function generateViaChatCompletions(
     const errorText = await response.text();
     let msg = `图片生成 API 错误: ${response.status}`;
     try { const j = JSON.parse(errorText); msg = j.error?.message || msg; } catch {}
-    throw new Error(msg);
+    throw toHttpError(msg, response.status, errorText);
   }
 
   const data = await response.json();
@@ -396,6 +475,7 @@ async function generateViaImagesEndpoint(
   model: string,
   apiKey: string,
   baseUrl: string,
+  endpointTypes?: string[],
 ): Promise<GenerationResult> {
   const body: Record<string, any> = {
     prompt: params.prompt,
@@ -411,7 +491,9 @@ async function generateViaImagesEndpoint(
     Object.assign(body, params.extraParams);
   }
 
-  const submitUrl = buildEndpoint(baseUrl, 'images/generations');
+  const imagePaths = getImageEndpointPaths(endpointTypes || []);
+  const rootBase = getRootBaseUrl(baseUrl);
+  const submitUrl = `${rootBase}${imagePaths.submit}`;
   const response = await fetch(submitUrl, {
     method: 'POST',
     headers: {
@@ -423,7 +505,7 @@ async function generateViaImagesEndpoint(
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`Image generation failed: ${response.status} ${errText}`);
+    throw toHttpError('Image generation failed', response.status, errText);
   }
 
   const data = await response.json();
@@ -433,8 +515,9 @@ async function generateViaImagesEndpoint(
 
   // If async task, poll for result
   if (!imageUrl && data.task_id) {
+    const pollUrl = `${rootBase}${imagePaths.poll(String(data.task_id))}`;
     imageUrl = await pollForResult(
-      `${baseUrl}/v1/images/generations/${data.task_id}`,
+      pollUrl,
       apiKey,
       IMAGE_POLL_INTERVAL,
       IMAGE_POLL_MAX_ATTEMPTS
@@ -447,6 +530,16 @@ async function generateViaImagesEndpoint(
 
   const mediaId = saveToMediaLibrary(imageUrl, params.prompt, 'ai-image');
   return { url: imageUrl, taskId: data.task_id, mediaId };
+}
+
+/**
+ * Resolve kling model name for API requests.
+ * Composite IDs like 'kling-image-v1-5' → 'kling-v1-5' (MemeFast version ID).
+ * Video version IDs (kling-v2-6) pass through unchanged.
+ */
+function resolveKlingModelName(model: string): string {
+  const match = model.match(/^kling-image-(v.+)$/);
+  return match ? `kling-${match[1]}` : model;
 }
 
 /**
@@ -464,7 +557,7 @@ async function generateViaKlingImagesEndpoint(
     ? 'kling/v1/images/omni-image'
     : 'kling/v1/images/generations';
 
-  const body: Record<string, any> = { prompt: params.prompt, model };
+  const body: Record<string, any> = { prompt: params.prompt, model: resolveKlingModelName(model) };
   if (params.aspectRatio) body.aspect_ratio = params.aspectRatio;
   if (params.negativePrompt) body.negative_prompt = params.negativePrompt;
   if (params.extraParams) Object.assign(body, params.extraParams);
@@ -749,7 +842,8 @@ async function generateViaReplicateImageEndpoint(
 export async function generateFreedomVideo(
   params: FreedomVideoParams
 ): Promise<GenerationResult> {
-  return freedomRetry(() => _generateFreedomVideoInner(params), 'Video generation');
+  const { config } = resolveFreedomFeatureConfig('freedom_video', 'video_generation', params.model);
+  return freedomRetry(() => _generateFreedomVideoInner(params), 'Video generation', config?.keyManager);
 }
 
 async function _generateFreedomVideoInner(
@@ -767,7 +861,9 @@ async function _generateFreedomVideoInner(
   }
   console.log(`[Freedom] Video config source: ${configSource}`);
 
-  const { apiKey, baseUrl, model: defaultModel } = config;
+  const { baseUrl, model: defaultModel } = config;
+  // 每次重试动态取当前 key（利用 keyManager rotate 后的新 key）
+  const apiKey = config.keyManager?.getCurrentKey?.() || config.apiKey;
   // 模型 ID 直接透传：UI 选的就是供应商原始 ID，无需转换
   const model = params.model || defaultModel;
 
@@ -1076,6 +1172,7 @@ async function generateVideoViaUnified(
   } else {
     const isLuma = (endpointTypes || []).some(t => /luma/i.test(t));
     const isRunway = (endpointTypes || []).some(t => /runway/i.test(t));
+    const isGrok = (endpointTypes || []).some(t => /grok/i.test(t)) || /grok/i.test(model);
 
     body = { model, prompt: params.prompt };
     const metadata: Record<string, any> = {};
@@ -1085,18 +1182,29 @@ async function generateVideoViaUnified(
       body.duration = isLuma ? `${params.duration}s` : params.duration;
     }
 
-    // AspectRatio: Runway uses metadata.ratio (pixel format); all others use metadata.aspect_ratio
+    // AspectRatio 处理策略（各模型格式不同，按模型分别处理）：
+    // - Runway: metadata.ratio（像素格式 1280:720）
+    // - Grok: 顶层 aspect_ratio（xAI 官方格式，支持 16:9/9:16/4:3/3:4/3:2/2:3/1:1）
+    // - 其他统一格式模型: metadata.aspect_ratio
     if (params.aspectRatio) {
       if (isRunway) {
         metadata.ratio = toRunwayRatio(params.aspectRatio);
+      } else if (isGrok) {
+        body.aspect_ratio = params.aspectRatio;
       } else {
         metadata.aspect_ratio = params.aspectRatio;
       }
     }
 
-    // Resolution: all non-Runway models pass via metadata
-    if (params.resolution && !isRunway) {
-      metadata.resolution = params.resolution;
+    // Resolution: Grok uses top-level "720p"/"480p"; others via metadata
+    if (params.resolution) {
+      if (isRunway) {
+        // Runway doesn't use resolution field
+      } else if (isGrok) {
+        body.resolution = params.resolution;
+      } else {
+        metadata.resolution = params.resolution;
+      }
     }
 
     // Image inputs (wan2.6, doubao, luma, vidu, minimax, runway, etc.)
@@ -1117,64 +1225,58 @@ async function generateVideoViaUnified(
     if (Object.keys(metadata).length > 0) body.metadata = metadata;
   }
 
-  const submitCandidates = [
-    buildEndpoint(baseUrl, 'video/generations'),
-    buildEndpoint(baseUrl, 'video/create'),
-  ];
+  // 直接使用端点类型对应的 URL（绝对路径，从域名根拼接）
+  const endpointPaths = getUnifiedEndpointPaths(endpointTypes || []);
+  const rootBase = getRootBaseUrl(baseUrl);
+  const submitUrl = `${rootBase}${endpointPaths.submit}`;
 
-  let submitData: any = null;
-  let submitError: Error | null = null;
-  for (const submitUrl of submitCandidates) {
-    const resp = await fetch(submitUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
-    if (resp.ok) {
-      submitData = await resp.json();
-      submitError = null;
-      break;
-    }
-
+  const resp = await fetch(submitUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
     const text = await resp.text();
-    const err = toHttpError('Unified video submit failed', resp.status, text);
-    if (resp.status === 404 || resp.status === 405) {
-      submitError = err;
-      continue;
-    }
-    throw err;
+    throw toHttpError('Unified video submit failed', resp.status, text);
   }
-  if (!submitData) throw submitError || new Error('Unified video submit failed');
+  const submitData = await resp.json();
 
-  const taskId = submitData.task_id || submitData.id || submitData.request_id;
+  const taskId =
+    submitData.task_id ||
+    submitData.id ||
+    submitData.request_id ||
+    submitData.data?.task_id ||
+    submitData.data?.id ||
+    submitData.response?.task_id ||
+    submitData.response?.id ||
+    submitData.result?.task_id ||
+    submitData.result?.id ||
+    submitData.output?.task_id ||
+    submitData.output?.id;
   const directUrl = extractVideoUrl(submitData);
   if (directUrl) return { url: directUrl, taskId: taskId ? String(taskId) : undefined };
   if (!taskId) throw new Error('统一视频接口返回空任务 ID');
 
-  const pollUrls = [
-    buildEndpoint(baseUrl, `video/generations/${taskId}`),
-    buildEndpoint(baseUrl, `video/query?id=${taskId}`),
-  ];
+  // 轮询：直接使用端点类型对应的 URL
+  const pollUrl = `${rootBase}${endpointPaths.poll(String(taskId))}`;
 
   for (let i = 0; i < VIDEO_POLL_MAX_ATTEMPTS; i++) {
     await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL));
-    for (const pollUrl of pollUrls) {
-      const pollResp = await fetch(pollUrl, {
-        headers: { 'Authorization': `Bearer ${apiKey}` },
-      });
-      if (!pollResp.ok) continue;
-      const pollData = await pollResp.json();
-      const status = String(pollData.status || pollData.state || pollData.data?.status || '').toLowerCase();
-      if (status === 'completed' || status === 'succeeded' || status === 'success') {
-        const videoUrl = extractVideoUrl(pollData);
-        if (videoUrl) return { url: videoUrl, taskId: String(taskId) };
-      }
-      if (status === 'failed' || status === 'error' || status === 'cancelled') {
-        throw new Error(pollData.error?.message || pollData.error || pollData.message || '视频生成失败');
-      }
+    const pollResp = await fetch(pollUrl, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+    if (!pollResp.ok) continue;
+    const pollData = await pollResp.json();
+    const status = String(pollData.status || pollData.state || pollData.data?.status || '').toLowerCase();
+    if (status === 'completed' || status === 'succeeded' || status === 'success') {
+      const videoUrl = extractVideoUrl(pollData);
+      if (videoUrl) return { url: videoUrl, taskId: String(taskId) };
+    }
+    if (status === 'failed' || status === 'error' || status === 'cancelled') {
+      throw new Error(pollData.error?.message || pollData.error || pollData.message || '视频生成失败');
     }
   }
 
@@ -1265,10 +1367,10 @@ async function generateVideoViaWan(
       audio: true,
     },
   };
-  if (params.duration) body.parameters.duration = Math.max(3, Math.min(10, params.duration));
+  if (params.duration) body.parameters.duration = Math.max(3, params.duration);
 
   const submitResp = await fetch(
-    `${rootBase}/ali/bailian/api/v1/services/aigc/video-generation/video-synthesis`,
+    `${rootBase}/alibailian/api/v1/services/aigc/video-generation/video-synthesis`,
     {
       method: 'POST',
       headers: {
@@ -1343,7 +1445,7 @@ async function generateVideoViaKling(
   }
 
   const body: Record<string, any> = {
-    model_name: model,
+    model_name: resolveKlingModelName(model),
     prompt: params.prompt,
     aspect_ratio: params.aspectRatio || '16:9',
     duration: String(params.duration ? Math.min(10, Math.max(5, params.duration)) : 5),

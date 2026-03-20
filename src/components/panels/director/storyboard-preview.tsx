@@ -137,7 +137,7 @@ export function StoryboardPreview({ onBack, onSplitComplete }: StoryboardPreview
       // Coordinates are calculated deterministically, no image detection needed
       const splitResults = await splitStoryboardImage(storyboardImage, {
         aspectRatio: storyboardConfig.aspectRatio,
-        resolution: storyboardConfig.resolution,
+        resolution: storyboardConfig.resolution === '1K' ? '2K' : storyboardConfig.resolution,
         sceneCount: storyboardConfig.sceneCount,
         options: {
           filterEmpty: true,

@@ -12,14 +12,14 @@ import { useEffect, useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { useScriptStore } from "@/stores/script-store";
 import { useMediaPanelStore, stages } from "@/stores/media-panel-store";
-import { Cloud, CloudOff, Loader2, Check } from "lucide-react";
+import { Cloud, CloudOff, Loader2, Check, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type SaveStatus = "saved" | "saving" | "unsaved";
 
 export function ProjectHeader() {
   const { activeProject } = useProjectStore();
-  const { activeStage } = useMediaPanelStore();
+  const { activeStage, activeEpisodeIndex, backToSeries } = useMediaPanelStore();
   const scriptStore = useScriptStore();
   
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
@@ -69,11 +69,23 @@ export function ProjectHeader() {
 
   return (
     <div className="h-10 bg-[#0f0f0f] border-b border-zinc-800 px-4 flex items-center justify-between shrink-0">
-      {/* Left: Project Name + Stage */}
-      <div className="flex items-center gap-3">
+      {/* Left: Project Name + Stage + Episode Breadcrumb */}
+      <div className="flex items-center gap-2">
         <span className="text-sm font-medium text-white truncate max-w-[200px]">
           {activeProject?.name || "未命名项目"}
         </span>
+        {activeEpisodeIndex != null && (
+          <>
+            <ChevronRight className="h-3 w-3 text-zinc-600" />
+            <button
+              className="text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+              onClick={backToSeries}
+              title="返回全剧视图"
+            >
+              第{activeEpisodeIndex}集
+            </button>
+          </>
+        )}
         {currentStageConfig && (
           <>
             <span className="text-zinc-700">/</span>

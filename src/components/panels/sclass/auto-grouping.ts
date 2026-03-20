@@ -90,6 +90,7 @@ export function autoGroupScenes(
       name: `第${groups.length + 1}组`,
       sceneIds: [...currentSceneIds],
       totalDuration: dur,
+      imageRefs: [],
       videoRefs: [],
       audioRefs: [],
       mergedPrompt: '',

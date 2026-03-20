@@ -157,10 +157,11 @@ export class VideoCache {
         sinkData.iterator = null;
       }
 
-      sinkData.iterator = sinkData.sink.samples(time);
+      const iterator = sinkData.sink.samples(time);
+      sinkData.iterator = iterator;
       sinkData.lastTime = time;
 
-      const { value: sample } = await sinkData.iterator.next();
+      const { value: sample } = await iterator.next();
 
       if (sample) {
         const frame = this.renderSampleToCanvas(sample, sinkData);

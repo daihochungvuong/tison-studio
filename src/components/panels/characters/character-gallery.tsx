@@ -12,6 +12,8 @@ import { useState, useMemo, useEffect } from "react";
 import { useCharacterLibraryStore, type Character, type CharacterFolder } from "@/stores/character-library-store";
 import { useAppSettingsStore } from "@/stores/app-settings-store";
 import { useProjectStore } from "@/stores/project-store";
+import { useMediaPanelStore } from "@/stores/media-panel-store";
+import { useActiveScriptProject } from "@/stores/script-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -48,6 +50,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { ImagePreviewModal } from "@/components/panels/director/media-preview-modal";
 
 type ViewMode = "grid" | "list";
 
@@ -72,6 +75,15 @@ export function CharacterGallery({ onCharacterSelect, selectedCharacterId }: Cha
   } = useCharacterLibraryStore();
   const { resourceSharing } = useAppSettingsStore();
   const { activeProjectId } = useProjectStore();
+  const { activeEpisodeIndex } = useMediaPanelStore();
+  const scriptProject = useActiveScriptProject();
+
+  // 集作用域过滤
+  const hasEpisodeScope = activeEpisodeIndex != null;
+  const activeEpisodeId = hasEpisodeScope
+    ? scriptProject?.scriptData?.episodes.find(ep => ep.index === activeEpisodeIndex)?.id
+    : undefined;
+  const [episodeViewScope, setEpisodeViewScope] = useState<'all' | 'episode'>('episode');
 
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [searchQuery, setSearchQuery] = useState("");
@@ -79,6 +91,7 @@ export function CharacterGallery({ onCharacterSelect, selectedCharacterId }: Cha
   const [newFolderName, setNewFolderName] = useState("");
   const [renamingFolder, setRenamingFolder] = useState<CharacterFolder | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const visibleFolders = useMemo(() => {
     if (resourceSharing.shareCharacters) return folders;
@@ -87,10 +100,20 @@ export function CharacterGallery({ onCharacterSelect, selectedCharacterId }: Cha
   }, [folders, resourceSharing.shareCharacters, activeProjectId]);
 
   const visibleCharacters = useMemo(() => {
-    if (resourceSharing.shareCharacters) return characters;
-    if (!activeProjectId) return [];
-    return characters.filter((c) => c.projectId === activeProjectId);
-  }, [characters, resourceSharing.shareCharacters, activeProjectId]);
+    let chars: Character[];
+    if (resourceSharing.shareCharacters) {
+      chars = characters;
+    } else if (!activeProjectId) {
+      chars = [];
+    } else {
+      chars = characters.filter((c) => c.projectId === activeProjectId);
+    }
+    // 本集过滤：只显示本集关联的角色 + 无集绑定的全局角色
+    if (hasEpisodeScope && episodeViewScope === 'episode' && activeEpisodeId) {
+      chars = chars.filter(c => !c.linkedEpisodeId || c.linkedEpisodeId === activeEpisodeId);
+    }
+    return chars;
+  }, [characters, resourceSharing.shareCharacters, activeProjectId, hasEpisodeScope, episodeViewScope, activeEpisodeId]);
 
   // Current folder's subfolders
   const subFolders = useMemo(() => 
@@ -223,6 +246,27 @@ export function CharacterGallery({ onCharacterSelect, selectedCharacterId }: Cha
               className="h-8 pl-7 text-sm"
             />
           </div>
+          {/* 全剧/本集切换（仅在进入某集时显示）*/}
+          {hasEpisodeScope && (
+            <div className="flex border rounded-md">
+              <Button
+                variant={episodeViewScope === 'episode' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-8 px-2 rounded-r-none text-xs"
+                onClick={() => setEpisodeViewScope('episode')}
+              >
+                本集
+              </Button>
+              <Button
+                variant={episodeViewScope === 'all' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-8 px-2 rounded-l-none text-xs"
+                onClick={() => setEpisodeViewScope('all')}
+              >
+                全剧
+              </Button>
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -254,7 +298,7 @@ export function CharacterGallery({ onCharacterSelect, selectedCharacterId }: Cha
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1 p-3">
+      <ScrollArea className="flex-1 p-3 pb-32">
         {/* Folders */}
         {subFolders.length > 0 && (
           <div className="mb-4">
@@ -333,12 +377,19 @@ export function CharacterGallery({ onCharacterSelect, selectedCharacterId }: Cha
                     {viewMode === "grid" ? (
                       <>
                         {/* Grid view */}
-                        <div className="aspect-square rounded bg-muted flex items-center justify-center overflow-hidden mb-2">
+                        <div
+                          className="aspect-square rounded bg-muted flex items-center justify-center overflow-hidden mb-2 cursor-zoom-in"
+                          title="双击查看大图"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            if (char.thumbnailUrl) setPreviewImageUrl(char.thumbnailUrl);
+                          }}
+                        >
                           {char.thumbnailUrl ? (
                             <img 
                               src={char.thumbnailUrl} 
                               alt={char.name}
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-contain"
                             />
                           ) : (
                             <User className="h-8 w-8 text-muted-foreground" />
@@ -398,6 +449,15 @@ export function CharacterGallery({ onCharacterSelect, selectedCharacterId }: Cha
           )
         )}
       </ScrollArea>
+
+      {/* Image preview lightbox */}
+      {previewImageUrl && (
+        <ImagePreviewModal
+          imageUrl={previewImageUrl}
+          isOpen={true}
+          onClose={() => setPreviewImageUrl(null)}
+        />
+      )}
 
       {/* New folder dialog */}
       <Dialog open={showNewFolderDialog} onOpenChange={setShowNewFolderDialog}>

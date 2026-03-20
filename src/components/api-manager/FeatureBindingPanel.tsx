@@ -70,7 +70,7 @@ const FEATURE_CONFIGS: FeatureMeta[] = [
     description: "生成角色和场景参考图",
     icon: <Image className="h-4 w-4" />,
     requiredCapability: "image_generation",
-    recommendation: "推荐使用 gemini-3.1-pro-image-preview（Nano Banana 2）— 画质优秀、一致性好",
+    recommendation: "💎 推荐使用 Nano Banana Pro (Gemini 3 Pro)— 画质优秀、一致性好",
   },
   {
     key: "video_generation",
@@ -78,7 +78,7 @@ const FEATURE_CONFIGS: FeatureMeta[] = [
     description: "将图片转换为视频",
     icon: <Video className="h-4 w-4" />,
     requiredCapability: "video_generation",
-    recommendation: "🎬 推荐使用 doubao-seedance-1-5-pro-251215 — 视频生成质量优秀、效果稳定",
+    recommendation: "🧪 测试推荐 doubao-seedance-1-0-lite-t2v-250428 — 适合快速验证流程",
   },
   {
     key: "image_understanding",
@@ -148,7 +148,6 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability[]> = {
   // ---- 图片生成模型 ----
   'cogview-3-plus': ['image_generation'],
   'gemini-imagen': ['image_generation'],
-  'gemini-3.1-pro-image-preview': ['image_generation'],
   'gemini-3-pro-image-preview': ['image_generation'],
   'gpt-image-1.5': ['image_generation'],
 
@@ -157,12 +156,13 @@ const MODEL_CAPABILITIES: Record<string, ModelCapability[]> = {
   'gemini-veo': ['video_generation'],
   'doubao-seedance-1-5-pro': ['video_generation'],
   'doubao-seedance-1-5-pro-251215': ['video_generation'],
-  'doubao-seedream-4-5-251128': ['video_generation'],
+  'doubao-seedream-4-5-251128': ['image_generation'],
   'veo3.1': ['video_generation'],
   'sora-2-all': ['video_generation'],
   'wan2.6-i2v': ['video_generation'],
   'grok-video-3': ['video_generation'],
   'grok-video-3-10s': ['video_generation'],
+  'grok-video-3-15s': ['video_generation'],
 
   // ---- 图片理解/视觉模型 ----
   'doubao-vision': ['vision'],
@@ -243,6 +243,7 @@ export function FeatureBindingPanel() {
     providers,
     modelTypes,
     modelTags,
+    modelEnableGroups,
     setFeatureBindings,
     toggleFeatureBinding,
     getFeatureBindings,
@@ -373,6 +374,15 @@ export function FeatureBindingPanel() {
   const [selectedBrand, setSelectedBrand] = useState<Record<string, string | null>>({});
   // 每个 feature 的搜索关键词
   const [searchQuery, setSearchQuery] = useState<Record<string, string>>({});
+
+  // MemeFast 供应商 ID 集合（用于分组提示）
+  const memefastProviderIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of providers) {
+      if (p.platform === 'memefast') ids.add(p.id);
+    }
+    return ids;
+  }, [providers]);
 
   return (
     <div className="p-6 border border-border rounded-xl bg-card space-y-6">
@@ -519,6 +529,39 @@ export function FeatureBindingPanel() {
                           </span>
                         </div>
                       )}
+
+                      {/* MemeFast 分组提示横幅 */}
+                      {(() => {
+                        const groups = new Set<string>();
+                        for (const binding of currentBindings) {
+                          const parsed = parseOptionKey(binding);
+                          if (!parsed) continue;
+                          const isMemefast = memefastProviderIds.has(parsed.providerIdOrPlatform)
+                            || parsed.providerIdOrPlatform === 'memefast';
+                          if (!isMemefast) continue;
+                          const mg = modelEnableGroups[parsed.model];
+                          if (mg) for (const g of mg) groups.add(g);
+                        }
+                        const sortedGroups = [...groups].sort();
+                        if (sortedGroups.length === 0) return null;
+                        return (
+                          <div className="flex flex-col gap-1.5 px-3 py-2.5 rounded-md bg-blue-500/10 border border-blue-500/30">
+                            <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                              已选的 MemeFast 模型支持以下分组：
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {sortedGroups.map(g => (
+                                <span key={g} className="text-xs bg-blue-500/20 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
+                                  {g}
+                                </span>
+                              ))}
+                            </div>
+                            <span className="text-[11px] text-blue-600/80 dark:text-blue-400/80">
+                              建议在 memefast.top 后台为以上分组都添加 Key，Key 越多可用性越高。
+                            </span>
+                          </div>
+                        );
+                      })()}
                       {isFreedomFeature && invalidBindings.length > 0 && (
                         <p className="text-[11px] text-amber-700 dark:text-amber-300">
                           检测到暂不可用绑定：系统不会自动清理，模型恢复后会自动继续可用。

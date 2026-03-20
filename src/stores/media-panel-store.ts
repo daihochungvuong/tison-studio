@@ -11,13 +11,15 @@ import {
   FilmIcon,
   SparklesIcon,
   PaletteIcon,
+  LayoutDashboardIcon,
+  FolderOpenIcon,
   LucideIcon,
 } from "lucide-react";
 import { create } from "zustand";
 import type { CharacterIdentityAnchors, CharacterNegativePrompt } from "@/types/script";
 
 // Tab-based navigation (simpler flat structure)
-export type Tab = "dashboard" | "script" | "characters" | "scenes" | "freedom" | "director" | "sclass" | "media" | "export" | "settings";
+export type Tab = "dashboard" | "overview" | "script" | "characters" | "scenes" | "freedom" | "director" | "sclass" | "assets" | "media" | "export" | "settings";
 
 export interface NavItem {
   id: Tab;
@@ -28,14 +30,16 @@ export interface NavItem {
 
 // Main navigation items (top section)
 export const mainNavItems: NavItem[] = [
+  { id: "overview", label: "概览", icon: LayoutDashboardIcon },
   { id: "script", label: "剧本", icon: FileTextIcon, phase: "01" },
   { id: "characters", label: "角色", icon: UsersIcon, phase: "02" },
   { id: "scenes", label: "场景", icon: MapPinIcon, phase: "02" },
-  { id: "freedom", label: "自由", icon: PaletteIcon, phase: "02" },
   { id: "director", label: "导演", icon: ClapperboardIcon, phase: "03" },
   { id: "sclass", label: "S级", icon: SparklesIcon, phase: "03" },
+  { id: "assets", label: "资产", icon: FolderOpenIcon },
   { id: "media", label: "素材", icon: VideoIcon },
   { id: "export", label: "导出", icon: FilmIcon, phase: "04" },
+  { id: "freedom", label: "自由", icon: PaletteIcon, phase: "02" },
 ];
 
 // Bottom navigation items
@@ -61,12 +65,14 @@ export const stages: StageConfig[] = [
 
 export const tabs: { [key in Tab]: { icon: LucideIcon; label: string; stage?: Stage } } = {
   dashboard: { icon: FileTextIcon, label: "项目" },
+  overview: { icon: LayoutDashboardIcon, label: "概览" },
   script: { icon: FileTextIcon, label: "剧本", stage: "script" },
   characters: { icon: UsersIcon, label: "角色", stage: "assets" },
   scenes: { icon: MapPinIcon, label: "场景", stage: "assets" },
   freedom: { icon: PaletteIcon, label: "自由" },
   director: { icon: ClapperboardIcon, label: "导演", stage: "director" },
   sclass: { icon: SparklesIcon, label: "S级", stage: "director" },
+  assets: { icon: FolderOpenIcon, label: "资产" },
   media: { icon: VideoIcon, label: "素材" },
   export: { icon: FilmIcon, label: "导出", stage: "export" },
   settings: { icon: SettingsIcon, label: "设置" },
@@ -83,6 +89,9 @@ export interface PendingDirectorData {
   sceneCount?: number; // 1 for single shot, N for scene with N shots
   styleId?: string; // Visual style from script
   sourceType?: 'shot' | 'scene' | 'episode'; // What triggered this jump
+  // 集作用域透传
+  sourceEpisodeIndex?: number;
+  sourceEpisodeId?: string;
 }
 
 // Data passed from script panel to character library
@@ -100,11 +109,16 @@ export interface PendingCharacterData {
   tags?: string[];    // 角色标签
   notes?: string;     // 角色备注
   styleId?: string;
+  // 集作用域透传
+  sourceEpisodeIndex?: number;
+  sourceEpisodeId?: string;
   // === 年代信息（从剧本元数据传递）===
   storyYear?: number;  // 故事年份，如 2002
   era?: string;        // 时代背景描述
+  // === 提示词语言偏好（从剧本面板透传）===
+  promptLanguage?: import('@/types/script').PromptLanguage;  // 'zh' | 'en' | 'zh+en'
   // === 专业角色设计字段（世界级大师生成） ===
-  visualPromptEn?: string;  // 英文视觉提示词（用于AI图像生成）
+  visualPromptEn?: string;  // 英文视觉提示词
   visualPromptZh?: string;  // 中文视觉提示词
   // === 6层身份锚点（角色一致性） ===
   identityAnchors?: CharacterIdentityAnchors;  // 身份锚点 - 6层特征锁定
@@ -132,6 +146,11 @@ export interface PendingSceneData {
   styleId?: string;
   tags?: string[];        // 场景标签
   notes?: string;         // 场景备注
+  // 集作用域透传
+  sourceEpisodeIndex?: number;
+  sourceEpisodeId?: string;
+  // 提示词语言偏好
+  promptLanguage?: import('@/types/script').PromptLanguage;
   
   // === 专业场景设计（完整传递）===
   visualPrompt?: string;       // 中文视觉描述
@@ -177,6 +196,11 @@ interface MediaPanelStore {
   setActiveTab: (tab: Tab) => void;
   setActiveStage: (stage: Stage) => void;
   setInProject: (inProject: boolean) => void;
+  // Episode scope (子项目作用域)
+  activeEpisodeIndex: number | null;
+  activeEpisodeScopeKey: string | null; // `${projectId}::ep-${episodeIndex}`
+  enterEpisode: (index: number, projectId?: string) => void;
+  backToSeries: () => void;
   highlightMediaId: string | null;
   requestRevealMedia: (mediaId: string) => void;
   clearHighlight: () => void;
@@ -204,7 +228,10 @@ export const useMediaPanelStore = create<MediaPanelStore>((set) => ({
     if (tabConfig?.stage) {
       set({ activeTab: tab, activeStage: tabConfig.stage, inProject: true });
     } else if (tab === "dashboard") {
-      set({ activeTab: tab, inProject: false });
+      set({ activeTab: tab, inProject: false, activeEpisodeIndex: null, activeEpisodeScopeKey: null });
+    } else if (tab === "overview" || tab === "freedom") {
+      // 项目级 tab（无 stage 但属于项目内）
+      set({ activeTab: tab, inProject: true });
     } else {
       set({ activeTab: tab });
     }
@@ -218,11 +245,26 @@ export const useMediaPanelStore = create<MediaPanelStore>((set) => ({
   },
   setInProject: (inProject) => {
     if (!inProject) {
-      set({ inProject: false, activeTab: "dashboard" });
+      set({ inProject: false, activeTab: "dashboard", activeEpisodeIndex: null, activeEpisodeScopeKey: null });
     } else {
       set({ inProject: true });
     }
   },
+  // Episode scope
+  activeEpisodeIndex: null,
+  activeEpisodeScopeKey: null,
+  enterEpisode: (index, projectId) => set({
+    activeEpisodeIndex: index,
+    activeEpisodeScopeKey: projectId ? `${projectId}::ep-${index}` : `default::ep-${index}`,
+    activeTab: "script",
+    activeStage: "script",
+    inProject: true,
+  }),
+  backToSeries: () => set({
+    activeEpisodeIndex: null,
+    activeEpisodeScopeKey: null,
+    activeTab: "overview",
+  }),
   highlightMediaId: null,
   requestRevealMedia: (mediaId) =>
     set({ activeTab: "media", highlightMediaId: mediaId }),

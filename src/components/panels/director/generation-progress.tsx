@@ -120,7 +120,12 @@ export function GenerationProgress() {
       } else {
         // Video mode: listen for full completion
         workerBridge.on('SCENE_COMPLETED', (event) => {
-          onSceneCompleted(event.sceneId, event.mediaId);
+          if (event.mediaId) {
+            onSceneCompleted(event.sceneId, event.mediaId);
+            return;
+          }
+
+          onSceneFailed(event.sceneId, '视频生成完成但未返回 mediaId');
         });
         workerBridge.on('ALL_SCENES_COMPLETED', () => {
           onAllCompleted();

@@ -11,8 +11,14 @@
  * 右栏：属性面板和跳转操作
  */
 
-import { useState, useCallback, useEffect } from "react";
-import { useScriptStore, useActiveScriptProject } from "@/stores/script-store";
+import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  useScriptStore,
+  useActiveScriptProject,
+  type ScriptCalibrationStatus,
+  type ScriptViewpointStatus,
+  type ScriptStructureStatus,
+} from "@/stores/script-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useAPIConfigStore } from "@/stores/api-config-store";
 import { getFeatureConfig, getFeatureNotConfiguredMessage } from "@/lib/ai/feature-router";
@@ -21,6 +27,7 @@ import { useMediaPanelStore } from "@/stores/media-panel-store";
 import { parseScript, generateShotList, generateScriptFromIdea } from "@/lib/script/script-parser";
 import { 
   importFullScript, 
+  importSingleEpisodeContent,
   generateEpisodeShots, 
   regenerateAllEpisodeShots,
   calibrateEpisodeTitles,
@@ -50,6 +57,8 @@ import {
   convertToScriptScenes,
   sortByImportance as sortScenesByImportance,
 } from "@/lib/script/scene-calibrator";
+import { syncToSeriesMeta } from "@/lib/script/series-meta-sync";
+import { exportProjectMetadata } from "@/lib/script/full-script-service";
 import {
   selectTrailerShots,
   convertShotsToSplitScenes,
@@ -62,15 +71,26 @@ import { EpisodeTree } from "./episode-tree";
 import { PropertyPanel } from "./property-panel";
 import { FileText } from "lucide-react";
 import { toast } from "sonner";
-import { getStyleTokens } from "@/lib/constants/visual-styles";
+import { getStyleTokens, DEFAULT_STYLE_ID } from "@/lib/constants/visual-styles";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import type { CalibrationStrictness, FilteredCharacterRecord } from "@/types/script";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export function ScriptView() {
-  const { activeProjectId, activeProject } = useProjectStore();
+  const { activeProjectId } = useProjectStore();
   const scriptProject = useActiveScriptProject();
   const {
     setActiveProjectId,
@@ -89,6 +109,10 @@ export function ScriptView() {
     addEpisode,
     updateEpisode,
     deleteEpisode,
+    // Bundle 操作（同步 episodeRawScripts）
+    addEpisodeBundle,
+    updateEpisodeBundle,
+    deleteEpisodeBundle,
     addScene,
     updateScene,
     deleteScene,
@@ -102,6 +126,10 @@ export function ScriptView() {
     setEpisodeRawScripts,
     updateEpisodeRawScript,
     setPromptLanguage,
+    setCalibrationState: setScriptCalibrationState,
+    setSingleShotCalibrationStatus: setSingleShotCalibrationStatusInStore,
+    setCalibrationStrictness,
+    setLastFilteredCharacters,
   } = useScriptStore();
 
   const { getApiKey, checkChatKeys, isFeatureConfigured } = useAPIConfigStore();
@@ -109,7 +137,7 @@ export function ScriptView() {
     characters: allCharacters, 
     selectCharacter: selectLibraryCharacter,
   } = useCharacterLibraryStore();
-  const { setActiveTab, goToDirectorWithData, goToCharacterWithData, goToSceneWithData } = useMediaPanelStore();
+  const { setActiveTab, goToDirectorWithData, goToCharacterWithData, goToSceneWithData, activeEpisodeIndex, enterEpisode } = useMediaPanelStore();
 
   // 选中状态
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -118,15 +146,27 @@ export function ScriptView() {
   >(null);
   
   // 完整剧本导入状态
-  const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'ready' | 'error'>('idle');
   const [importError, setImportError] = useState<string | undefined>();
-  
+
   // AI校准状态
-  const [calibrationStatus, setCalibrationStatus] = useState<'idle' | 'calibrating' | 'completed' | 'error'>('idle');
+  const calibrationState = scriptProject?.calibrationState;
+  const calibrationStatus = calibrationState?.titleCalibrationStatus || 'idle';
   const [missingTitleCount, setMissingTitleCount] = useState(0);
-  
+
+  // 导入/大纲生成状态持久化到 store，面板切换后可恢复
+  const importStatus = calibrationState?.importStatus || 'idle';
+  const setImportStatus = useCallback((status: 'idle' | 'importing' | 'ready' | 'error') => {
+    if (!activeProjectId) return;
+    setScriptCalibrationState(activeProjectId, { importStatus: status });
+  }, [activeProjectId, setScriptCalibrationState]);
+
+  const synopsisStatus = calibrationState?.synopsisStatus || 'idle';
+  const setSynopsisStatus = useCallback((status: 'idle' | 'generating' | 'completed' | 'error') => {
+    if (!activeProjectId) return;
+    setScriptCalibrationState(activeProjectId, { synopsisStatus: status });
+  }, [activeProjectId, setScriptCalibrationState]);
+
   // 大纲生成状态
-  const [synopsisStatus, setSynopsisStatus] = useState<'idle' | 'generating' | 'completed' | 'error'>('idle');
   const [missingSynopsisCount, setMissingSynopsisCount] = useState(0);
   
   // 角色阶段分析状态
@@ -135,21 +175,31 @@ export function ScriptView() {
   const [suggestMultiStage, setSuggestMultiStage] = useState(false);
   
   // 角色校准状态
-  const [characterCalibrationStatus, setCharacterCalibrationStatus] = useState<'idle' | 'calibrating' | 'completed' | 'error'>('idle');
+  const characterCalibrationStatus = calibrationState?.characterCalibrationStatus || 'idle';
   const [characterCalibrationResult, setCharacterCalibrationResult] = useState<{
     filteredCount: number;
     mergedCount: number;
     finalCount: number;
   } | null>(null);
   
+  // 角色校准确认弹窗状态
+  const pendingCalibrationCharacters = calibrationState?.pendingCalibrationCharacters || null;
+  const pendingFilteredCharacters = calibrationState?.pendingFilteredCharacters || [];
+  const calibrationDialogOpen = calibrationState?.calibrationDialogOpen || false;
+  
   // 场景校准状态
-  const [sceneCalibrationStatus, setSceneCalibrationStatus] = useState<'idle' | 'calibrating' | 'completed' | 'error'>('idle');
+  const sceneCalibrationStatus = calibrationState?.sceneCalibrationStatus || 'idle';
   // 视角分析状态（强制工作流）
-  const [viewpointAnalysisStatus, setViewpointAnalysisStatus] = useState<'idle' | 'analyzing' | 'completed' | 'error'>('idle');
+  const viewpointAnalysisStatus = calibrationState?.viewpointAnalysisStatus || 'idle';
   
   // 单个分镜校准状态
-  const [singleShotCalibrationStatus, setSingleShotCalibrationStatus] = useState<Record<string, 'idle' | 'calibrating' | 'completed' | 'error'>>({});
+  const singleShotCalibrationStatus = calibrationState?.singleShotCalibrationStatus || {};
   
+  // 单集结构补全状态
+  const structureCompletionStatus = calibrationState?.structureCompletionStatus || 'idle';
+  const [structureOverwriteConfirmOpen, setStructureOverwriteConfirmOpen] = useState(false);
+  const prevEpisodeRef = useRef<{ index: number | null; rawLen: number }>({ index: null, rawLen: 0 });
+
   // 二次校准追踪（中栏独立按钮触发时标记，用于进度面板区分首次/二次）
   const [secondPassTypes, setSecondPassTypes] = useState<Set<string>>(new Set());
   const addSecondPass = useCallback((type: string) => {
@@ -178,18 +228,56 @@ export function ScriptView() {
     }
   }, [activeProjectId, setActiveProjectId, ensureProject]);
 
-  const projectId = activeProjectId || "default";
-
-  // Ensure project data exists
+  // 面板重新挂载时，将"进行中"的瞬态状态重置为 idle，避免显示虚假的 loading 状态
   useEffect(() => {
-    ensureProject(projectId);
-  }, [projectId, ensureProject]);
+    if (!activeProjectId) return;
+    const state = useScriptStore.getState().projects[activeProjectId]?.calibrationState;
+    if (!state) return;
+    const fixes: Record<string, string> = {};
+    if (state.importStatus === 'importing') fixes.importStatus = 'idle';
+    if (state.synopsisStatus === 'generating') fixes.synopsisStatus = 'idle';
+    if (Object.keys(fixes).length > 0) {
+      setScriptCalibrationState(activeProjectId, fixes as never);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
+  // Keep last stable project id during transient null windows (e.g. duplicate flow)
+  // to avoid creating phantom project keys like "default".
+  const stableProjectIdRef = useRef<string>("default-project");
+  useEffect(() => {
+    if (activeProjectId) {
+      stableProjectIdRef.current = activeProjectId;
+    }
+  }, [activeProjectId]);
+
+  const projectId = activeProjectId || stableProjectIdRef.current;
+
+  const setCalibrationStatus = useCallback((status: ScriptCalibrationStatus) => {
+    setScriptCalibrationState(projectId, { titleCalibrationStatus: status });
+  }, [projectId, setScriptCalibrationState]);
+
+  const setCharacterCalibrationStatus = useCallback((status: ScriptCalibrationStatus) => {
+    setScriptCalibrationState(projectId, { characterCalibrationStatus: status });
+  }, [projectId, setScriptCalibrationState]);
+
+  const setSceneCalibrationStatus = useCallback((status: ScriptCalibrationStatus) => {
+    setScriptCalibrationState(projectId, { sceneCalibrationStatus: status });
+  }, [projectId, setScriptCalibrationState]);
+
+  const setViewpointAnalysisStatus = useCallback((status: ScriptViewpointStatus) => {
+    setScriptCalibrationState(projectId, { viewpointAnalysisStatus: status });
+  }, [projectId, setScriptCalibrationState]);
+
+  const setStructureCompletionStatus = useCallback((status: ScriptStructureStatus) => {
+    setScriptCalibrationState(projectId, { structureCompletionStatus: status });
+  }, [projectId, setScriptCalibrationState]);
 
   // Local state fallbacks
   const rawScript = scriptProject?.rawScript || "";
   const language = scriptProject?.language || "中文";
   const targetDuration = scriptProject?.targetDuration || "60s";
-  const styleId = scriptProject?.styleId || "2d_ghibli";
+  const styleId = scriptProject?.styleId || DEFAULT_STYLE_ID;
   const sceneCount = scriptProject?.sceneCount;
   const shotCount = scriptProject?.shotCount;
   const scriptData = scriptProject?.scriptData || null;
@@ -198,10 +286,88 @@ export function ScriptView() {
   const shots = scriptProject?.shots || [];
   const promptLanguage = scriptProject?.promptLanguage || 'zh';
 
+  // 当前集作用域：从 activeEpisodeIndex 映射到 episodeId
+  const activeEpisodeId = activeEpisodeIndex != null
+    ? scriptData?.episodes.find(ep => ep.index === activeEpisodeIndex)?.id ?? undefined
+    : undefined;
+
+  // 进入集时自动聚焦到对应 episode
+  useEffect(() => {
+    if (activeEpisodeIndex != null && scriptData?.episodes) {
+      const ep = scriptData.episodes.find(e => e.index === activeEpisodeIndex);
+      if (ep) {
+        setSelectedItemId(`episode_${activeEpisodeIndex}`);
+        setSelectedItemType("episode");
+      }
+    }
+  }, [activeEpisodeIndex, scriptData?.episodes]);
+
   // 优先检查新的服务映射
   const chatConfigured = isFeatureConfigured('script_analysis') || checkChatKeys().isAllConfigured;
   const episodeRawScripts = scriptProject?.episodeRawScripts || [];
+
+  // 集作用域下显示该集原始内容，全剧视图显示完整 rawScript
+  const effectiveRawScript = activeEpisodeIndex != null
+    ? episodeRawScripts.find(ep => ep.episodeIndex === activeEpisodeIndex)?.rawContent ?? ""
+    : rawScript;
   
+  // === 单集结构补全: rawContent 从空→非空 自动触发 ===
+  const handleStructureCompletion = useCallback(async () => {
+    if (activeEpisodeIndex == null || !scriptData) return;
+    setStructureCompletionStatus('processing');
+    try {
+      const result = await importSingleEpisodeContent(
+        effectiveRawScript,
+        activeEpisodeIndex,
+        projectId,
+      );
+      if (result.success) {
+        setStructureCompletionStatus('completed');
+        if (result.sceneCount > 0) {
+          toast.success(`结构补全完成：解析出 ${result.sceneCount} 个场景`);
+        }
+      } else {
+        setStructureCompletionStatus('error');
+        toast.error(result.error || '结构补全失败');
+      }
+    } catch (e) {
+      setStructureCompletionStatus('error');
+      console.error('[handleStructureCompletion]', e);
+    }
+    // 3秒后重置为 idle，允许再次触发
+    setTimeout(() => setStructureCompletionStatus('idle'), 3000);
+  }, [activeEpisodeIndex, effectiveRawScript, projectId, scriptData]);
+
+  useEffect(() => {
+    const prev = prevEpisodeRef.current;
+    const currentLen = effectiveRawScript.length;
+
+    // 集切换 → 只更新 ref
+    if (prev.index !== (activeEpisodeIndex ?? null)) {
+      prevEpisodeRef.current = { index: activeEpisodeIndex ?? null, rawLen: currentLen };
+      return;
+    }
+
+    prevEpisodeRef.current = { index: activeEpisodeIndex ?? null, rawLen: currentLen };
+
+    // 只在集作用域 + idle 状态下触发
+    if (activeEpisodeIndex == null) return;
+    if (structureCompletionStatus !== 'idle') return;
+
+    // 检测粘贴：从短内容跳变到大量内容
+    if (prev.rawLen < 20 && currentLen > 50) {
+      const ep = scriptData?.episodes?.find(e => e.index === activeEpisodeIndex);
+      const hasScenes = ep && ep.sceneIds.length > 0;
+
+      if (hasScenes) {
+        setStructureOverwriteConfirmOpen(true);
+      } else {
+        handleStructureCompletion();
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveRawScript, activeEpisodeIndex, structureCompletionStatus]);
+
   // 计算各集的分镜生成状态
   const episodeGenerationStatus = episodeRawScripts.reduce((acc, ep) => {
     acc[ep.episodeIndex] = ep.shotGenerationStatus;
@@ -213,8 +379,16 @@ export function ScriptView() {
     (id: string, type: "character" | "scene" | "shot" | "episode") => {
       setSelectedItemId(id);
       setSelectedItemType(type);
+
+      // 选中集时进入集作用域（设置 activeEpisodeIndex，激活 P4C 自动结构补全）
+      if (type === "episode" && id.startsWith("episode_")) {
+        const epIndex = parseInt(id.replace("episode_", ""), 10);
+        if (!Number.isNaN(epIndex)) {
+          enterEpisode(epIndex, projectId);
+        }
+      }
     },
-    []
+    [enterEpisode, projectId]
   );
 
   // 获取选中的数据
@@ -322,8 +496,8 @@ export function ScriptView() {
     setImportError(undefined);
 
     try {
-      // 1. 规则解析导入
-      const result = await importFullScript(text, projectId);
+      // 1. 规则解析导入（把用户选的风格和语言一起传进去）
+      const result = await importFullScript(text, projectId, { styleId, promptLanguage });
       
       if (!result.success) {
         throw new Error(result.error || "导入失败");
@@ -594,6 +768,23 @@ export function ScriptView() {
         setViewpointAnalysisStatus('completed');
         removeSecondPass('shots');
         toast.success(`分镜校准完成！已优化 ${result.calibratedCount}/${result.totalShots} 个分镜`);
+        
+        // P2b: 分镜校准回写 SeriesMeta
+        try {
+          const store = useScriptStore.getState();
+          const meta = store.projects[projectId]?.seriesMeta;
+          if (meta) {
+            const updates = syncToSeriesMeta(meta, 'shot', {});
+            if (Object.keys(updates).length > 0) {
+              store.updateSeriesMeta(projectId, updates);
+              console.log('[handleCalibrateShots] SeriesMeta 分镜回写完成');
+            }
+            const mdContent = exportProjectMetadata(projectId);
+            store.setMetadataMarkdown(projectId, mdContent);
+          }
+        } catch (e) {
+          console.warn('[handleCalibrateShots] SeriesMeta 回写失败:', e);
+        }
       } else {
         throw new Error(result.error || '分镜校准失败');
       }
@@ -672,12 +863,12 @@ export function ScriptView() {
     }
     
     // 设置状态为 calibrating
-    setSingleShotCalibrationStatus(prev => ({ ...prev, [shotId]: 'calibrating' }));
+    setSingleShotCalibrationStatusInStore(projectId, shotId, 'calibrating');
     
     const shot = shots.find(s => s.id === shotId);
     if (!shot) {
       toast.error('找不到分镜');
-      setSingleShotCalibrationStatus(prev => ({ ...prev, [shotId]: 'error' }));
+      setSingleShotCalibrationStatusInStore(projectId, shotId, 'error');
       return;
     }
     
@@ -702,7 +893,7 @@ export function ScriptView() {
       );
       
       if (result.success) {
-        setSingleShotCalibrationStatus(prev => ({ ...prev, [shotId]: 'completed' }));
+        setSingleShotCalibrationStatusInStore(projectId, shotId, 'completed');
         toast.success(`分镜校准完成！`);
       } else {
         throw new Error(result.error || '分镜校准失败');
@@ -710,10 +901,10 @@ export function ScriptView() {
     } catch (error) {
       const err = error as Error;
       console.error("[ScriptView] Single shot calibration failed:", err);
-      setSingleShotCalibrationStatus(prev => ({ ...prev, [shotId]: 'error' }));
+      setSingleShotCalibrationStatusInStore(projectId, shotId, 'error');
       toast.error(`分镜校准失败: ${err.message}`);
     }
-  }, [projectId, styleId, promptLanguage, shots, directorProject?.cinematographyProfileId]);
+  }, [projectId, styleId, promptLanguage, shots, directorProject?.cinematographyProfileId, setSingleShotCalibrationStatusInStore]);
 
   // AI生成每集大纲
   const handleGenerateSynopses = useCallback(async () => {
@@ -793,7 +984,12 @@ export function ScriptView() {
     });
     
     addSecondPass('characters');
-    setCharacterCalibrationStatus('calibrating');
+    setScriptCalibrationState(projectId, {
+      characterCalibrationStatus: 'calibrating',
+      calibrationDialogOpen: false,
+      pendingCalibrationCharacters: null,
+      pendingFilteredCharacters: [],
+    });
     toast.info(`正在 AI 校准 ${rawCharacters.length} 个原始角色...`);
     
     try {
@@ -822,24 +1018,14 @@ export function ScriptView() {
         rawCharacters,
         background,
         episodeRawScripts,
-        { previousCharacters: existingCalibrated, promptLanguage } // 只保留上次结果，防止角色丢失
+        { previousCharacters: existingCalibrated, promptLanguage, strictness: scriptProject?.calibrationStrictness || 'normal' }
       );
       
       // 转换并更新角色列表（保留原始数据）
       const sortedChars = sortByImportance(calibResult.characters);
       
-      // 强制过滤群演角色
-      const filteredChars = sortedChars.filter(c => {
-        const name = c.name.toLowerCase();
-        const isGroupExtra = [
-          '保安', '警察', '员工', '护士', '医生', '记者', 
-          '律师', '路人', '众人', '若干', '群众',
-          'security', 'police', 'employee', 'nurse', 'doctor', 'reporter'
-        ].some(keyword => name === keyword || name === keyword + '1' || name === keyword + '2');
-        return !isGroupExtra;
-      });
-      
-      let newCharacters = convertToScriptCharacters(filteredChars, rawCharacters, promptLanguage);
+      // 不再硬编码过滤，由 calibrator 根据严格度统一处理
+      let newCharacters = convertToScriptCharacters(sortedChars, rawCharacters, promptLanguage);
       
       console.log('[ScriptView] 角色校准结果:', calibResult.analysisNotes);
       
@@ -969,31 +1155,22 @@ export function ScriptView() {
         }
       }
       
-      // === 第三步：保存所有角色到 store ===
-      // 【关键修复】从 store 获取最新的 scriptData，避免闭包中的 stale 数据覆盖其他字段
-      const currentScriptData = useScriptStore.getState().projects[projectId]?.scriptData;
-      
-      if (currentScriptData) {
-        setScriptData(projectId, {
-          ...currentScriptData,  // 使用最新 store 数据，保留 scenes.viewpoints 等
-          characters: newCharacters,
-        });
-        console.log('[handleCalibrateCharacters] 已保存到 store，角色数:', newCharacters.length);
-      } else {
-        console.error('[handleCalibrateCharacters] currentScriptData 为空，无法保存！');
-      }
+      // === 第三步：保存到临时状态，打开确认弹窗 ===
+      setScriptCalibrationState(projectId, {
+        pendingCalibrationCharacters: newCharacters,
+        pendingFilteredCharacters: calibResult.filteredCharacters || [],
+        calibrationDialogOpen: true,
+      });
       
       setCharacterCalibrationStatus('completed');
       removeSecondPass('characters');
       setCharacterCalibrationResult({
-        filteredCount: calibResult.filteredWords.length,
+        filteredCount: calibResult.filteredCharacters.length,
         mergedCount: calibResult.mergeRecords.length,
         finalCount: newCharacters.length,
       });
       
-      toast.success(
-        `角色校准完成: ${newCharacters.length} 个角色`
-      );
+      toast.info(`角色校准完成，共 ${newCharacters.length} 个角色，请确认结果`);
       
       if (calibResult.filteredWords.length > 0) {
         console.log('[ScriptView] 过滤的非角色词:', calibResult.filteredWords);
@@ -1008,7 +1185,83 @@ export function ScriptView() {
       removeSecondPass('characters');
       toast.error(`角色校准失败: ${err.message}`);
     }
-  }, [scriptData, scriptProject, episodeRawScripts, projectId, promptLanguage, setScriptData, viewpointAnalysisStatus, addSecondPass, removeSecondPass]);
+  }, [scriptData, scriptProject, episodeRawScripts, projectId, promptLanguage, setScriptData, viewpointAnalysisStatus, addSecondPass, removeSecondPass, setScriptCalibrationState]);
+
+  // 确认角色校准结果
+  const handleConfirmCalibration = useCallback((
+    keptCharacters: import("@/types/script").ScriptCharacter[],
+    filteredCharacters: FilteredCharacterRecord[]
+  ) => {
+    const currentScriptData = useScriptStore.getState().projects[projectId]?.scriptData;
+    if (currentScriptData) {
+      setScriptData(projectId, {
+        ...currentScriptData,
+        characters: keptCharacters,
+      });
+      console.log('[handleConfirmCalibration] 已保存到 store，角色数:', keptCharacters.length);
+    }
+    setLastFilteredCharacters(projectId, filteredCharacters);
+    setScriptCalibrationState(projectId, {
+      calibrationDialogOpen: false,
+      pendingCalibrationCharacters: null,
+      pendingFilteredCharacters: [],
+    });
+    toast.success(`角色校准确认: ${keptCharacters.length} 个角色已保存`);
+    
+    // P2b: 校准回写 SeriesMeta
+    try {
+      const store = useScriptStore.getState();
+      const meta = store.projects[projectId]?.seriesMeta;
+      if (meta) {
+        const updates = syncToSeriesMeta(meta, 'character', { characters: keptCharacters });
+        if (Object.keys(updates).length > 0) {
+          store.updateSeriesMeta(projectId, updates);
+          console.log('[handleConfirmCalibration] SeriesMeta 角色回写完成');
+        }
+        // 重新生成元数据 MD
+        const mdContent = exportProjectMetadata(projectId);
+        store.setMetadataMarkdown(projectId, mdContent);
+      }
+    } catch (e) {
+      console.warn('[handleConfirmCalibration] SeriesMeta 回写失败:', e);
+    }
+  }, [projectId, setScriptData, setLastFilteredCharacters, setScriptCalibrationState]);
+
+  // 取消角色校准
+  const handleCancelCalibration = useCallback(() => {
+    setScriptCalibrationState(projectId, {
+      calibrationDialogOpen: false,
+      pendingCalibrationCharacters: null,
+      pendingFilteredCharacters: [],
+    });
+    toast.info('已取消角色校准');
+  }, [projectId, setScriptCalibrationState]);
+
+  // 校准严格度变更
+  const handleCalibrationStrictnessChange = useCallback((strictness: CalibrationStrictness) => {
+    setCalibrationStrictness(projectId, strictness);
+  }, [projectId, setCalibrationStrictness]);
+
+  // 从被过滤列表恢复角色
+  const handleRestoreFilteredCharacter = useCallback((characterName: string) => {
+    const currentScriptData = useScriptStore.getState().projects[projectId]?.scriptData;
+    if (!currentScriptData) return;
+    
+    const newChar: import("@/types/script").ScriptCharacter = {
+      id: `char_restored_${Date.now()}`,
+      name: characterName,
+      tags: ['extra', 'restored'],
+    };
+    
+    setScriptData(projectId, {
+      ...currentScriptData,
+      characters: [...currentScriptData.characters, newChar],
+    });
+    
+    const current = useScriptStore.getState().projects[projectId]?.lastFilteredCharacters || [];
+    setLastFilteredCharacters(projectId, current.filter(fc => fc.name !== characterName));
+    toast.success(`已恢复角色: ${characterName}`);
+  }, [projectId, setScriptData, setLastFilteredCharacters]);
 
   // 导入剧本后检测是否需要多阶段角色（仅用于显示提示）
   const handleAnalyzeCharacterStages = useCallback(async () => {
@@ -1314,6 +1567,8 @@ export function ScriptView() {
         tags: character.tags,
         notes: character.notes,
         styleId,
+        // === 提示词语言偏好 ===
+        promptLanguage: scriptProject?.promptLanguage || 'zh',
         // === 专业角色设计字段（世界级大师生成）===
         visualPromptEn: character.visualPromptEn,
         visualPromptZh: character.visualPromptZh,
@@ -1326,11 +1581,14 @@ export function ScriptView() {
         // === 年代信息（从剧本元数据传递）===
         storyYear: background?.storyStartYear,
         era: background?.era || background?.timelineSetting,
+        // === 集作用域透传 ===
+        sourceEpisodeIndex: activeEpisodeIndex ?? undefined,
+        sourceEpisodeId: activeEpisodeId,
       });
 
       toast.success(`已跳转到角色库，角色「${character.name}」信息已填充到生成控制台`);
     },
-    [scriptData, styleId, setActiveTab, selectLibraryCharacter, goToCharacterWithData]
+    [scriptData, styleId, setActiveTab, selectLibraryCharacter, goToCharacterWithData, activeEpisodeIndex, activeEpisodeId]
   );
 
   // 获取当前风格的 tokens（从统一风格库导入）
@@ -1395,6 +1653,11 @@ export function ScriptView() {
           spatialLayout: scene.spatialLayout,
           viewpoints: contactSheetData.viewpoints,
           contactSheetPrompts: contactSheetData.contactSheetPrompts,
+          // === 集作用域透传 ===
+          sourceEpisodeIndex: activeEpisodeIndex ?? undefined,
+          sourceEpisodeId: activeEpisodeId,
+          // === 提示词语言偏好 ===
+          promptLanguage: scriptProject?.promptLanguage || 'zh',
         });
 
         const viewpointCount = scene.viewpoints!.length;
@@ -1422,6 +1685,11 @@ export function ScriptView() {
             keyProps: scene.keyProps,
             spatialLayout: scene.spatialLayout,
           }),
+          // === 集作用域透传 ===
+          sourceEpisodeIndex: activeEpisodeIndex ?? undefined,
+          sourceEpisodeId: activeEpisodeId,
+          // === 提示词语言偏好 ===
+          promptLanguage: scriptProject?.promptLanguage || 'zh',
         });
 
         toast.success(
@@ -1429,7 +1697,7 @@ export function ScriptView() {
         );
       }
     },
-    [scriptData, styleId, setActiveTab, goToSceneWithData, shots]
+    [scriptData, styleId, setActiveTab, goToSceneWithData, shots, activeEpisodeIndex, activeEpisodeId]
   );
 
   // 跳转到AI导演
@@ -1472,11 +1740,14 @@ export function ScriptView() {
         sceneCount: 1, // 单个分镜
         styleId, // 继承剧本的风格
         sourceType: 'shot',
+        // === 集作用域透传 ===
+        sourceEpisodeIndex: activeEpisodeIndex ?? undefined,
+        sourceEpisodeId: activeEpisodeId,
       });
 
       toast.success("已跳转到AI导演，分镜内容已填充");
     },
-    [shots, scriptData, styleId, goToDirectorWithData, setActiveTab]
+    [shots, scriptData, styleId, goToDirectorWithData, setActiveTab, activeEpisodeIndex, activeEpisodeId]
   );
 
   // 从场景跳转到AI导演（整个场景的所有分镜）
@@ -1529,29 +1800,35 @@ export function ScriptView() {
         sceneCount: shotCount,
         styleId,
         sourceType: 'scene',
+        // === 集作用域透传 ===
+        sourceEpisodeIndex: activeEpisodeIndex ?? undefined,
+        sourceEpisodeId: activeEpisodeId,
       });
 
       toast.success(`已跳转到AI导演，场景「${scene.name || scene.location}」已填充 (${shotCount}个分镜)`);
     },
-    [shots, scriptData, styleId, goToDirectorWithData, setActiveTab]
+    [shots, scriptData, styleId, goToDirectorWithData, setActiveTab, activeEpisodeIndex, activeEpisodeId]
   );
 
   // CRUD handlers - 封装projectId
-  const handleAddEpisode = useCallback((episode: import("@/types/script").Episode) => {
-    addEpisode(projectId, episode);
-  }, [projectId, addEpisode]);
+  // Episode 使用 Bundle 版本（同步 episodeRawScripts）
+  const handleAddEpisodeBundle = useCallback((title: string, synopsis: string) => {
+    addEpisodeBundle(projectId, title, synopsis);
+  }, [projectId, addEpisodeBundle]);
 
-  const handleUpdateEpisode = useCallback((id: string, updates: Partial<import("@/types/script").Episode>) => {
-    updateEpisode(projectId, id, updates);
-  }, [projectId, updateEpisode]);
+  const handleUpdateEpisodeBundle = useCallback((episodeIndex: number, updates: { title?: string; synopsis?: string }) => {
+    updateEpisodeBundle(projectId, episodeIndex, updates);
+  }, [projectId, updateEpisodeBundle]);
 
-  const handleDeleteEpisode = useCallback((id: string) => {
-    deleteEpisode(projectId, id);
-    if (selectedItemId === id) {
+  const handleDeleteEpisodeBundle = useCallback((episodeIndex: number) => {
+    deleteEpisodeBundle(projectId, episodeIndex);
+    // 清除选中状态（如果删除的是当前选中集）
+    const ep = scriptData?.episodes?.find(e => e.index === episodeIndex);
+    if (ep && selectedItemId === ep.id) {
       setSelectedItemId(null);
       setSelectedItemType(null);
     }
-  }, [projectId, deleteEpisode, selectedItemId]);
+  }, [projectId, deleteEpisodeBundle, scriptData?.episodes, selectedItemId]);
 
   const handleAddScene = useCallback((scene: import("@/types/script").ScriptScene, episodeId?: string) => {
     addScene(projectId, scene, episodeId);
@@ -1778,6 +2055,23 @@ export function ScriptView() {
       setSceneCalibrationStatus('completed');
       removeSecondPass('scenes');
       toast.success(`场景校准完成！${result.analysisNotes}`);
+      
+      // P2b: 场景校准回写 SeriesMeta
+      try {
+        const store = useScriptStore.getState();
+        const meta = store.projects[projectId]?.seriesMeta;
+        if (meta) {
+          const updates = syncToSeriesMeta(meta, 'scene', { scenes: newScenes });
+          if (Object.keys(updates).length > 0) {
+            store.updateSeriesMeta(projectId, updates);
+            console.log('[handleCalibrateScenes] SeriesMeta 场景回写完成');
+          }
+          const mdContent = exportProjectMetadata(projectId);
+          store.setMetadataMarkdown(projectId, mdContent);
+        }
+      } catch (e) {
+        console.warn('[handleCalibrateScenes] SeriesMeta 回写失败:', e);
+      }
       
       // 显示合并建议（不自动执行）
       if (result.mergeRecords.length > 0) {
@@ -2040,7 +2334,7 @@ export function ScriptView() {
         {/* 左栏：剧本输入 */}
         <ResizablePanel defaultSize={30} minSize={20}>
           <ScriptInput
-            rawScript={rawScript}
+            rawScript={effectiveRawScript}
             language={language}
             targetDuration={targetDuration}
             styleId={styleId}
@@ -2049,7 +2343,9 @@ export function ScriptView() {
             parseStatus={parseStatus}
             parseError={parseError}
             chatConfigured={chatConfigured}
-            onRawScriptChange={(v) => setRawScript(projectId, v)}
+            onRawScriptChange={activeEpisodeIndex != null
+              ? (v) => updateEpisodeRawScript(projectId, activeEpisodeIndex, { rawContent: v })
+              : (v) => setRawScript(projectId, v)}
             onLanguageChange={(v) => setLanguage(projectId, v)}
             onDurationChange={(v) => setTargetDuration(projectId, v)}
             onStyleChange={(v) => setStyleId(projectId, v)}
@@ -2070,7 +2366,6 @@ export function ScriptView() {
             characterCalibrationStatus={characterCalibrationStatus}
             sceneCalibrationStatus={sceneCalibrationStatus}
             secondPassTypes={secondPassTypes}
-            defaultMode={activeProject?.type === 'ad' ? 'create' : 'import'}
             promptLanguage={promptLanguage}
             onPromptLanguageChange={(v) => setPromptLanguage(projectId, v)}
           />
@@ -2087,9 +2382,9 @@ export function ScriptView() {
             selectedItemId={selectedItemId}
             selectedItemType={selectedItemType}
             onSelectItem={handleSelectItem}
-            onAddEpisode={handleAddEpisode}
-            onUpdateEpisode={handleUpdateEpisode}
-            onDeleteEpisode={handleDeleteEpisode}
+            onAddEpisodeBundle={handleAddEpisodeBundle}
+            onUpdateEpisodeBundle={handleUpdateEpisodeBundle}
+            onDeleteEpisodeBundle={handleDeleteEpisodeBundle}
             onAddScene={handleAddScene}
             onUpdateScene={handleUpdateScene}
             onDeleteScene={handleDeleteScene}
@@ -2122,6 +2417,17 @@ export function ScriptView() {
             // 单个分镜校准
             onCalibrateSingleShot={handleCalibrateSingleShot}
             singleShotCalibrationStatus={singleShotCalibrationStatus}
+            // 校准严格度相关
+            calibrationStrictness={scriptProject?.calibrationStrictness || 'normal'}
+            onCalibrationStrictnessChange={handleCalibrationStrictnessChange}
+            lastFilteredCharacters={scriptProject?.lastFilteredCharacters || []}
+            onRestoreFilteredCharacter={handleRestoreFilteredCharacter}
+            // 校准确认弹窗
+            calibrationDialogOpen={calibrationDialogOpen}
+            pendingCalibrationCharacters={pendingCalibrationCharacters}
+            pendingFilteredCharacters={pendingFilteredCharacters}
+            onConfirmCalibration={handleConfirmCalibration}
+            onCancelCalibration={handleCancelCalibration}
           />
         </ResizablePanel>
 
@@ -2158,6 +2464,24 @@ export function ScriptView() {
           />
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      {/* 结构补全覆盖确认弹窗 */}
+      <AlertDialog open={structureOverwriteConfirmOpen} onOpenChange={setStructureOverwriteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>覆盖现有场景结构？</AlertDialogTitle>
+            <AlertDialogDescription>
+              该集已有场景数据，重新解析将替换现有场景并清理对应分镜。确认继续？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => handleStructureCompletion()}>
+              确认覆盖
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

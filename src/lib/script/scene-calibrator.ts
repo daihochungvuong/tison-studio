@@ -18,6 +18,8 @@ import type { ScriptScene, ProjectBackground, EpisodeRawScript, SceneRawContent,
 import { callFeatureAPI } from '@/lib/ai/feature-router';
 import { processBatched } from '@/lib/ai/batch-processor';
 import { estimateTokens, safeTruncate } from '@/lib/ai/model-registry';
+import { useScriptStore } from '@/stores/script-store';
+import { buildSeriesContextSummary } from './series-meta-sync';
 
 // ==================== 类型定义 ====================
 
@@ -297,8 +299,15 @@ export async function calibrateScenes(
     };
   });
   
+  // 2.5 注入剧级上下文
+  const store = useScriptStore.getState();
+  const activeProjectId = store.activeProjectId;
+  const seriesMeta = activeProjectId ? store.projects[activeProjectId]?.seriesMeta : null;
+  const seriesCtx = buildSeriesContextSummary(seriesMeta || null);
+  const seriesCtxBlock = seriesCtx ? `\n\n${seriesCtx}\n` : '';
+
   // 3. 构建共享的 system prompt
-  const systemPrompt = `你是专业的影视美术指导和场景设计师，擅长为现有场景补充专业的视觉设计方案。
+  const systemPrompt = `你是专业的影视美术指导和场景设计师，擅长为现有场景补充专业的视觉设计方案。${seriesCtxBlock}
 
 【核心任务】
 为以下场景补充美术设计信息，用于生成场景概念图。

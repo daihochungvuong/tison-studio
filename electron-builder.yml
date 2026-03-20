@@ -2,9 +2,15 @@ appId: com.manju2026.moyin-creator
 productName: 魔因漫创
 directories:
   buildResources: build
-  output: release
+  output: release/build
 files:
   - out/**/*
+  - package.json
+  # Desktop-only packaging guard: exclude web/image-toolchain heavy deps
+  - "!node_modules/next/**"
+  - "!node_modules/@next/**"
+  - "!node_modules/sharp/**"
+  - "!node_modules/@img/**"
 
 extraResources:
   - from: demo-data
@@ -15,10 +21,16 @@ extraResources:
 asar: true
 asarUnpack:
   - "**/*.node"
-  - "**/node_modules/sharp/**"
 
 # 图标配置
 icon: build/icon.ico
+
+mac:
+  icon: build/icon.icns
+  artifactName: ${name}-${version}-${arch}-mac.${ext}
+  target:
+    - dmg
+    - zip
 
 win:
   executableName: moyin-creator

@@ -743,7 +743,7 @@ export function PropertyPanel({
   if (selectedItemType === "episode" && episode) {
     return (
       <ScrollArea className="h-full">
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 pb-32">
           {/* 头部 */}
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded bg-primary/10 flex items-center justify-center">
@@ -856,7 +856,7 @@ export function PropertyPanel({
   if (selectedItemType === "character" && character) {
     return (
       <ScrollArea className="h-full">
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 pb-32">
           {/* 头部 */}
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
@@ -1111,7 +1111,7 @@ export function PropertyPanel({
   if (selectedItemType === "scene" && scene) {
     return (
       <ScrollArea className="h-full">
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 pb-32">
           {/* 头部 */}
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
@@ -1402,7 +1402,7 @@ export function PropertyPanel({
     const shotStatus = getShotCompletionStatus(shot);
     return (
       <ScrollArea className="h-full">
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 pb-32">
           {/* 头部 */}
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">

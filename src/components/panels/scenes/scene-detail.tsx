@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { ImagePreviewModal } from "@/components/panels/director/media-preview-modal";
 
 interface SceneDetailProps {
   scene: Scene | null;
@@ -58,6 +59,7 @@ export function SceneDetail({ scene }: SceneDetailProps) {
   const [isEditingVisualPrompt, setIsEditingVisualPrompt] = useState(false);
   const [editVisualPrompt, setEditVisualPrompt] = useState("");
   const [newTag, setNewTag] = useState("");
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   
   const resolvedImage = useResolvedImageUrl(scene?.referenceImage);
 
@@ -194,12 +196,16 @@ export function SceneDetail({ scene }: SceneDetailProps) {
       </div>
 
       <ScrollArea className="flex-1">
-        <div className="p-3 space-y-4">
+        <div className="p-3 space-y-4 pb-32">
           {/* Main preview */}
           <div className="space-y-2">
             <div 
-              className="aspect-video rounded-lg bg-muted overflow-hidden border relative"
+              className="aspect-video rounded-lg bg-muted overflow-hidden border relative cursor-zoom-in"
+              title="双击查看完整图片"
               draggable={!!scene.referenceImage}
+              onDoubleClick={() => {
+                if (resolvedImage) setPreviewImageUrl(resolvedImage);
+              }}
               onDragStart={(e) => {
                 if (scene.referenceImage) {
                   e.dataTransfer.setData("application/json", JSON.stringify({
@@ -216,7 +222,7 @@ export function SceneDetail({ scene }: SceneDetailProps) {
                 <img 
                   src={resolvedImage || ''} 
                   alt={scene.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
@@ -470,6 +476,13 @@ export function SceneDetail({ scene }: SceneDetailProps) {
           </div>
         </div>
       </ScrollArea>
+
+      {/* Image Preview Lightbox */}
+      <ImagePreviewModal
+        imageUrl={previewImageUrl || ''}
+        isOpen={!!previewImageUrl}
+        onClose={() => setPreviewImageUrl(null)}
+      />
     </div>
   );
 }

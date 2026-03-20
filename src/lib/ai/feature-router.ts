@@ -48,6 +48,16 @@ const FEATURE_PLATFORM_MAP: Partial<Record<AIFeature, string>> = {
   freedom_video: 'memefast',
 };
 
+/**
+ * 默认模型映射：当供应商未显式绑定模型时，为特定功能提供默认模型
+ * 仅在 fallback 路径中使用（用户显式绑定优先）
+ */
+const FEATURE_DEFAULT_MODEL: Partial<Record<AIFeature, Record<string, string>>> = {
+  image_understanding: {
+    memefast: 'gemini-3.1-pro-preview', // 魔音API 默认使用 Gemini 3.1 Pro
+  },
+};
+
 
 /**
  * 解析 platform:model 格式
@@ -105,7 +115,8 @@ export function getAllFeatureConfigs(feature: AIFeature): FeatureConfig[] {
     const keys = parseApiKeys(provider.apiKey);
     if (keys.length === 0) continue;
     
-    const keyManager = getProviderKeyManager(provider.id, provider.apiKey);
+    const scopeKey = `${feature}:${model || 'default'}`;
+    const keyManager = getProviderKeyManager(provider.id, provider.apiKey, scopeKey);
     
     configs.push({
       feature,
@@ -142,9 +153,13 @@ export function getFeatureConfig(feature: AIFeature): FeatureConfig | null {
       if (provider) {
         const keys = parseApiKeys(provider.apiKey);
         if (keys.length > 0) {
-          const keyManager = getProviderKeyManager(provider.id, provider.apiKey);
+          const fallbackModel = FEATURE_DEFAULT_MODEL[feature]?.[provider.platform] || provider.model?.[0] || '';
+          const scopeKey = `${feature}:${fallbackModel || 'default'}`;
+          const keyManager = getProviderKeyManager(provider.id, provider.apiKey, scopeKey);
           const featureInfo = AI_FEATURES.find(f => f.key === feature);
-          const model = provider.model?.[0] || '';
+          // 优先使用功能默认模型，否则取供应商第一个模型
+          const defaultModel = FEATURE_DEFAULT_MODEL[feature]?.[provider.platform];
+          const model = defaultModel || provider.model?.[0] || '';
           return {
             feature,
             featureName: featureInfo?.name || feature,
@@ -291,8 +306,8 @@ export function useFeatureConfig(feature: AIFeature): FeatureConfig | null {
   if (keys.length === 0) return null;
   
   const featureInfo = AI_FEATURES.find(f => f.key === feature);
-  const keyManager = getProviderKeyManager(provider.id, provider.apiKey);
   const model = provider.model?.[0] || '';
+  const keyManager = getProviderKeyManager(provider.id, provider.apiKey, `${feature}:${model || 'default'}`);
   
   return {
     feature,

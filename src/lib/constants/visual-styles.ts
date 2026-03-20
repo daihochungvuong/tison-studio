@@ -556,6 +556,26 @@ export const VISUAL_STYLE_PRESETS: readonly StylePreset[] = [
   ...STYLES_STOP_MOTION,
 ] as const;
 
+// ============================================================
+// 自定义风格查找回调（用户数据，存储在 localStorage）
+// 通过回调避免常量文件直接依赖 zustand store
+// ============================================================
+let _customStyleLookup: ((id: string) => StylePreset | undefined) | null = null;
+
+/**
+ * 注册自定义风格查找函数（由 custom-style-store 调用）
+ * 自定义风格是用户个人资产，不包含在内置预设中
+ */
+export function registerCustomStyleLookup(fn: (id: string) => StylePreset | undefined) {
+  _customStyleLookup = fn;
+}
+
+/** 内部：先查内置，再查自定义 */
+function _findStyle(styleId: string): StylePreset | undefined {
+  return VISUAL_STYLE_PRESETS.find(s => s.id === styleId)
+    || _customStyleLookup?.(styleId);
+}
+
 /** 分类信息 */
 export const STYLE_CATEGORIES: { id: StyleCategory; name: string; styles: readonly StylePreset[] }[] = [
   { id: '3d', name: '3D风格', styles: STYLES_3D },
@@ -564,32 +584,34 @@ export const STYLE_CATEGORIES: { id: StyleCategory; name: string; styles: readon
   { id: 'stop_motion', name: '定格动画', styles: STYLES_STOP_MOTION },
 ];
 
-/** 根据 ID 获取风格 */
+/** 根据 ID 获取风格（内置 + 自定义） */
 export function getStyleById(styleId: string): StylePreset | undefined {
-  return VISUAL_STYLE_PRESETS.find(s => s.id === styleId);
+  return _findStyle(styleId);
 }
 
-/** 获取风格的提示词 */
-export function getStylePrompt(styleId: string): string {
-  const style = getStyleById(styleId);
-  return style?.prompt || VISUAL_STYLE_PRESETS[0].prompt;
+/** 获取风格的提示词（styleId 为空时返回空字符串，表示不施加风格） */
+export function getStylePrompt(styleId: string | null | undefined): string {
+  if (!styleId) return '';
+  const style = _findStyle(styleId);
+  return style?.prompt || '';
 }
 
 /** 获取风格的负面提示词 */
-export function getStyleNegativePrompt(styleId: string): string {
-  const style = getStyleById(styleId);
-  return style?.negativePrompt || VISUAL_STYLE_PRESETS[0].negativePrompt;
+export function getStyleNegativePrompt(styleId: string | null | undefined): string {
+  if (!styleId) return '';
+  const style = _findStyle(styleId);
+  return style?.negativePrompt || '';
 }
 
 /** 获取风格名称 */
 export function getStyleName(styleId: string): string {
-  const style = getStyleById(styleId);
+  const style = _findStyle(styleId);
   return style?.name || styleId;
 }
 
 /** 获取风格缩略图路径 */
 export function getStyleThumbnail(styleId: string): string {
-  const style = getStyleById(styleId);
+  const style = _findStyle(styleId);
   return style?.thumbnail || VISUAL_STYLE_PRESETS[0].thumbnail;
 }
 
@@ -632,7 +654,7 @@ export function getStylesByCategory(categoryId: string): StylePreset[] {
  * @param styleId 风格 ID
  */
 export function getStyleDescription(styleId: string): string {
-  const style = getStyleById(styleId);
+  const style = _findStyle(styleId);
   return style?.description || style?.name || styleId;
 }
 
@@ -640,8 +662,9 @@ export function getStyleDescription(styleId: string): string {
  * 根据风格 ID 获取媒介类型
  * @returns 匹配的 MediaType，未找到时默认返回 'cinematic'（直通，最安全默认值）
  */
-export function getMediaType(styleId: string): MediaType {
-  const style = getStyleById(styleId);
+export function getMediaType(styleId: string | null | undefined): MediaType {
+  if (!styleId) return 'cinematic';
+  const style = _findStyle(styleId);
   return style?.mediaType ?? 'cinematic';
 }
 

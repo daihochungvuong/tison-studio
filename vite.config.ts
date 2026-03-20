@@ -1,7 +1,88 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import path from 'node:path'
 import electron from 'vite-plugin-electron/simple'
 import react from '@vitejs/plugin-react'
+
+/**
+ * Vite 插件：API CORS 代理
+ *
+ * 在开发服务器上注册 /__api_proxy 中间件，
+ * 将浏览器端的外部 API 请求由服务端转发，绕过 CORS 限制。
+ *
+ * 用法（前端）：
+ *   fetch('/__api_proxy?url=' + encodeURIComponent('https://example.com/api'))
+ */
+function apiCorsProxyPlugin(): Plugin {
+  return {
+    name: 'api-cors-proxy',
+    configureServer(server) {
+      server.middlewares.use('/__api_proxy', async (req, res) => {
+        // 处理 OPTIONS 预检请求
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': '*',
+          });
+          res.end();
+          return;
+        }
+
+        // 解析目标 URL
+        const urlParam = new URL(req.url || '', 'http://localhost').searchParams.get('url');
+        if (!urlParam) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing ?url= parameter' }));
+          return;
+        }
+
+        try {
+          // 读取请求体
+          const bodyChunks: Buffer[] = [];
+          for await (const chunk of req) {
+            bodyChunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+          }
+          const body = bodyChunks.length > 0 ? Buffer.concat(bodyChunks) : undefined;
+
+          // 解包 x-proxy-headers 中的原始请求头
+          const proxyHeadersRaw = req.headers['x-proxy-headers'];
+          let forwardHeaders: Record<string, string> = {};
+          if (typeof proxyHeadersRaw === 'string') {
+            try {
+              forwardHeaders = JSON.parse(proxyHeadersRaw);
+            } catch { /* ignore parse errors */ }
+          }
+
+          // 服务端转发请求
+          const response = await fetch(urlParam, {
+            method: req.method || 'GET',
+            headers: forwardHeaders,
+            body: req.method !== 'GET' && req.method !== 'HEAD' ? body : undefined,
+          });
+
+          // 将远程响应转发回浏览器
+          const respBody = await response.arrayBuffer();
+          const headers: Record<string, string> = {
+            'Access-Control-Allow-Origin': '*',
+          };
+          // 转发 content-type
+          const ct = response.headers.get('content-type');
+          if (ct) headers['Content-Type'] = ct;
+
+          res.writeHead(response.status, headers);
+          res.end(Buffer.from(respBody));
+        } catch (err: any) {
+          console.error('[api-cors-proxy] Proxy error:', err?.message || err);
+          res.writeHead(502, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(JSON.stringify({ error: 'Proxy request failed', detail: err?.message }));
+        }
+      });
+    },
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -15,6 +96,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    apiCorsProxyPlugin(),
     react(),
     electron({
       main: {

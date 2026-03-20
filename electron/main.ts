@@ -7,6 +7,8 @@ import fs from 'node:fs'
 import https from 'node:https'
 import http from 'node:http'
 import os from 'node:os'
+import packageMetadata from '../package.json'
+import type { AvailableUpdateInfo, OpenExternalResult, UpdateCheckResult, UpdateManifest } from '../src/types/update'
 
 // electron-vite 构建后的目录结构
 //
@@ -20,13 +22,140 @@ import os from 'node:os'
 //
 process.env.APP_ROOT = path.join(__dirname, '../..')
 
-export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
+export const VITE_DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'] || process.env['VITE_DEV_SERVER_URL']
 export const MAIN_DIST = path.join(__dirname)
 export const RENDERER_DIST = path.join(__dirname, '../renderer')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
 let win: BrowserWindow | null
+
+type PackageUpdateConfig = {
+  manifestUrl?: string
+  defaultGithubUrl?: string
+  defaultBaiduUrl?: string
+  defaultBaiduCode?: string
+}
+
+type PackageMetadata = {
+  updateConfig?: PackageUpdateConfig
+}
+
+const packageUpdateConfig = (packageMetadata as PackageMetadata).updateConfig ?? {}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function sanitizeExternalUrl(value?: string) {
+  if (!isNonEmptyString(value)) return undefined
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return undefined
+    }
+    return parsed.toString()
+  } catch {
+    return undefined
+  }
+}
+
+function normalizeVersionParts(version: string) {
+  return version
+    .replace(/^v/i, '')
+    .split('.')
+    .map((part) => {
+      const match = part.match(/\d+/)
+      return match ? Number(match[0]) : 0
+    })
+}
+
+function compareVersions(left: string, right: string) {
+  const leftParts = normalizeVersionParts(left)
+  const rightParts = normalizeVersionParts(right)
+  const maxLength = Math.max(leftParts.length, rightParts.length)
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftPart = leftParts[index] ?? 0
+    const rightPart = rightParts[index] ?? 0
+    if (leftPart > rightPart) return 1
+    if (leftPart < rightPart) return -1
+  }
+
+  return 0
+}
+
+function getUpdateManifestUrl() {
+  return sanitizeExternalUrl(packageUpdateConfig.manifestUrl)
+}
+
+function getDefaultGithubUrl() {
+  return sanitizeExternalUrl(packageUpdateConfig.defaultGithubUrl)
+}
+
+function getDefaultBaiduUrl() {
+  return sanitizeExternalUrl(packageUpdateConfig.defaultBaiduUrl)
+}
+
+function getDefaultBaiduCode() {
+  return isNonEmptyString(packageUpdateConfig.defaultBaiduCode)
+    ? packageUpdateConfig.defaultBaiduCode.trim()
+    : undefined
+}
+
+async function fetchUpdateManifest() {
+  const manifestUrl = getUpdateManifestUrl()
+  if (!manifestUrl) {
+    throw new Error('未配置版本清单地址')
+  }
+
+  const requestUrl = new URL(manifestUrl)
+  requestUrl.searchParams.set('_ts', Date.now().toString())
+
+  const response = await net.fetch(requestUrl.toString())
+  if (!response.ok) {
+    throw new Error(`版本清单请求失败 (${response.status})`)
+  }
+
+  const rawManifest = await response.json() as Partial<UpdateManifest>
+  if (!isNonEmptyString(rawManifest.version)) {
+    throw new Error('版本清单缺少有效的 version 字段')
+  }
+
+  return {
+    version: rawManifest.version.trim(),
+    releaseNotes: isNonEmptyString(rawManifest.releaseNotes)
+      ? rawManifest.releaseNotes.trim()
+      : isNonEmptyString(rawManifest.notes)
+        ? rawManifest.notes.trim()
+        : undefined,
+    publishedAt: isNonEmptyString(rawManifest.publishedAt)
+      ? rawManifest.publishedAt.trim()
+      : undefined,
+    githubUrl: sanitizeExternalUrl(rawManifest.githubUrl) ?? getDefaultGithubUrl(),
+    baiduUrl: sanitizeExternalUrl(rawManifest.baiduUrl) ?? getDefaultBaiduUrl(),
+    baiduCode: isNonEmptyString(rawManifest.baiduCode)
+      ? rawManifest.baiduCode.trim()
+      : getDefaultBaiduCode(),
+  } satisfies UpdateManifest
+}
+
+async function resolveAvailableUpdate(currentVersion: string): Promise<AvailableUpdateInfo | null> {
+  const manifest = await fetchUpdateManifest()
+  if (compareVersions(manifest.version, currentVersion) <= 0) {
+    return null
+  }
+
+  return {
+    currentVersion,
+    latestVersion: manifest.version,
+    releaseNotes: manifest.releaseNotes,
+    publishedAt: manifest.publishedAt,
+    githubUrl: manifest.githubUrl,
+    baiduUrl: manifest.baiduUrl,
+    baiduCode: manifest.baiduCode,
+  }
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -228,12 +357,6 @@ async function removeDir(dirPath: string) {
   await fs.promises.rm(dirPath, { recursive: true, force: true })
 }
 
-async function moveDir(source: string, destination: string) {
-  if (source === destination) return
-  await copyDir(source, destination)
-  await removeDir(source)
-}
-
 async function deleteOldFiles(dirPath: string, cutoffTime: number): Promise<number> {
   let cleared = 0
   try {
@@ -302,23 +425,30 @@ const getImagesDir = (subDir: string) => {
 }
 
 // Download image from URL and save to local file
-const downloadImage = (url: string, filePath: string): Promise<void> => {
+const downloadImage = (url: string, filePath: string, maxRedirects: number = 5): Promise<void> => {
   return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) {
+      reject(new Error('Too many redirects'))
+      return
+    }
     const protocol = url.startsWith('https') ? https : http
     const file = fs.createWriteStream(filePath)
     
     protocol.get(url, (response) => {
-      // Handle redirects
-      if (response.statusCode === 301 || response.statusCode === 302) {
+      const status = response.statusCode ?? 0
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        file.close()
         const redirectUrl = response.headers.location
         if (redirectUrl) {
-          downloadImage(redirectUrl, filePath).then(resolve).catch(reject)
+          downloadImage(redirectUrl, filePath, maxRedirects - 1).then(resolve).catch(reject)
           return
         }
       }
       
-      if (response.statusCode !== 200) {
-        reject(new Error(`Failed to download: ${response.statusCode}`))
+      if (status !== 200) {
+        file.close()
+        fs.unlink(filePath, () => {})
+        reject(new Error(`Failed to download: ${status}`))
         return
       }
       
@@ -328,10 +458,361 @@ const downloadImage = (url: string, filePath: string): Promise<void> => {
         resolve()
       })
     }).on('error', (err) => {
-      fs.unlink(filePath, () => {}) // Delete partial file
+      file.close()
+      fs.unlink(filePath, () => {})
       reject(err)
     })
   })
+}
+
+type ImageHostUploadProvider = {
+  name: string
+  platform: string
+  baseUrl?: string
+  uploadPath?: string
+  apiKeyParam?: string
+  apiKeyHeader?: string
+  apiKeyFormField?: string
+  expirationParam?: string
+  imageField?: string
+  imagePayloadType?: 'base64' | 'file'
+  nameField?: string
+  staticFormFields?: Record<string, string>
+  responseUrlField?: string
+  responseDeleteUrlField?: string
+}
+
+type ImageHostUploadOptions = {
+  name?: string
+  expiration?: number
+}
+
+type ImageHostUploadRequest = {
+  provider: ImageHostUploadProvider
+  apiKey: string
+  imageData: string
+  options?: ImageHostUploadOptions
+}
+
+type ImageHostUploadResponse = {
+  success: boolean
+  url?: string
+  deleteUrl?: string
+  error?: string
+}
+
+function isHttpUrl(value: string) {
+  return value.startsWith('http://') || value.startsWith('https://')
+}
+
+function resolveImageHostUploadUrl(provider: ImageHostUploadProvider) {
+  const uploadPath = (provider.uploadPath || '').trim()
+  if (uploadPath && isHttpUrl(uploadPath)) {
+    return uploadPath
+  }
+  const baseUrl = (provider.baseUrl || '').trim().replace(/\/*$/, '')
+  if (!baseUrl && !uploadPath) return ''
+  if (!baseUrl && uploadPath) return ''
+  if (!uploadPath) return baseUrl
+  const normalizedPath = uploadPath.startsWith('/') ? uploadPath : `/${uploadPath}`
+  return `${baseUrl}${normalizedPath}`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function getByPath(obj: unknown, objectPath?: string): unknown {
+  if (!isRecord(obj) || !objectPath) return undefined
+  return objectPath.split('.').reduce<unknown>((acc, key) => {
+    if (!isRecord(acc)) return undefined
+    return acc[key]
+  }, obj)
+}
+
+function extractFirstHttpUrl(value: string): string | undefined {
+  const match = value.match(/https?:\/\/[^\s"'<>]+/i)
+  return match?.[0]
+}
+
+function getExtensionFromMimeType(mimeType?: string) {
+  switch ((mimeType || '').toLowerCase()) {
+    case 'image/jpeg':
+      return 'jpg'
+    case 'image/gif':
+      return 'gif'
+    case 'image/webp':
+      return 'webp'
+    case 'image/svg+xml':
+      return 'svg'
+    case 'image/bmp':
+      return 'bmp'
+    case 'image/avif':
+      return 'avif'
+    case 'image/png':
+    default:
+      return 'png'
+  }
+}
+
+function getMimeTypeFromExtension(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase()
+  const mimeTypes: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml',
+    '.avif': 'image/avif',
+  }
+  return mimeTypes[extension] || 'image/png'
+}
+
+function parseDataUrl(dataUrl: string): { buffer: Buffer, mimeType: string } | null {
+  const matches = dataUrl.match(/^data:([^;,]+)?(?:;[^,]*)?;base64,(.+)$/s)
+  if (!matches) return null
+  const mimeType = matches[1] || 'image/png'
+  const buffer = Buffer.from(matches[2], 'base64')
+  if (buffer.length === 0) return null
+  return { buffer, mimeType }
+}
+
+function resolveImageSourcePath(imagePath: string): string | null {
+  const localImageMatch = imagePath.match(/^local-image:\/\/(.+)\/(.+)$/)
+  if (localImageMatch) {
+    const [, category, filename] = localImageMatch
+    return path.join(getMediaRoot(), category, decodeURIComponent(filename))
+  }
+
+  if (imagePath.startsWith('file://')) {
+    return imagePath.replace(/^file:\/\/\/?/, '')
+  }
+
+  if (path.isAbsolute(imagePath)) {
+    return imagePath
+  }
+
+  return null
+}
+
+async function fetchBuffer(url: string, timeoutMs: number = 45000) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'image/*, */*;q=0.8',
+      },
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`请求失败: ${response.status}`)
+    }
+
+    const arrayBuffer = await response.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+    if (buffer.length === 0) {
+      throw new Error('获取到的图片为空')
+    }
+
+    return {
+      buffer,
+      mimeType: response.headers.get('content-type') || 'image/png',
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function readImageSource(imageData: string): Promise<{ buffer: Buffer, mimeType: string }> {
+  if (isHttpUrl(imageData)) {
+    return fetchBuffer(imageData)
+  }
+
+  const parsedDataUrl = parseDataUrl(imageData)
+  if (parsedDataUrl) {
+    return parsedDataUrl
+  }
+
+  const resolvedPath = resolveImageSourcePath(imageData)
+  if (resolvedPath) {
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error('本地图片不存在')
+    }
+    const buffer = fs.readFileSync(resolvedPath)
+    if (buffer.length === 0) {
+      throw new Error('本地图片为空文件')
+    }
+    return {
+      buffer,
+      mimeType: getMimeTypeFromExtension(resolvedPath),
+    }
+  }
+
+  const rawBuffer = Buffer.from(imageData, 'base64')
+  if (rawBuffer.length === 0) {
+    throw new Error('图片数据无效')
+  }
+  return {
+    buffer: rawBuffer,
+    mimeType: 'image/png',
+  }
+}
+
+async function toUploadFilePayload(imageData: string, name?: string) {
+  const { buffer, mimeType } = await readImageSource(imageData)
+  const baseName = (name || 'upload').trim() || 'upload'
+  const hasExtension = /\.[a-z0-9]{2,8}$/i.test(baseName)
+  const filename = hasExtension ? baseName : `${baseName}.${getExtensionFromMimeType(mimeType)}`
+  return {
+    blob: new Blob([new Uint8Array(buffer)], { type: mimeType }),
+    filename,
+    mimeType,
+  }
+}
+
+async function toBase64Payload(imageData: string) {
+  if (imageData.startsWith('data:')) {
+    const parsed = parseDataUrl(imageData)
+    if (!parsed) {
+      throw new Error('图片数据无效')
+    }
+    return parsed.buffer.toString('base64')
+  }
+
+  if (isHttpUrl(imageData) || imageData.startsWith('local-image://') || imageData.startsWith('file://') || path.isAbsolute(imageData)) {
+    const { buffer } = await readImageSource(imageData)
+    return buffer.toString('base64')
+  }
+
+  return imageData
+}
+
+async function uploadImageHostFromMain({
+  provider,
+  apiKey,
+  imageData,
+  options,
+}: ImageHostUploadRequest): Promise<ImageHostUploadResponse> {
+  try {
+    const uploadUrl = resolveImageHostUploadUrl(provider)
+    if (!uploadUrl) {
+      return { success: false, error: '图床上传地址未配置' }
+    }
+
+    const fieldName = provider.imageField || 'image'
+    const nameField = provider.nameField || 'name'
+    const payloadType = provider.imagePayloadType || 'base64'
+    const staticFormFields = provider.staticFormFields || {}
+
+    const formData = new FormData()
+    Object.entries(staticFormFields).forEach(([key, value]) => {
+      formData.append(key, value)
+    })
+    if (provider.apiKeyFormField && apiKey) {
+      formData.append(provider.apiKeyFormField, apiKey)
+    }
+
+    if (payloadType === 'file') {
+      const { blob, filename } = await toUploadFilePayload(imageData, options?.name)
+      formData.append(fieldName, blob, filename)
+    } else {
+      const base64Data = await toBase64Payload(imageData)
+      formData.append(fieldName, base64Data)
+    }
+
+    if (options?.name) {
+      formData.append(nameField, options.name)
+    }
+
+    const url = new URL(uploadUrl)
+    if (provider.apiKeyParam && apiKey) {
+      url.searchParams.set(provider.apiKeyParam, apiKey)
+    }
+    if (provider.expirationParam && options?.expiration) {
+      url.searchParams.set(provider.expirationParam, String(options.expiration))
+    }
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
+    }
+    if (provider.apiKeyHeader && apiKey) {
+      headers[provider.apiKeyHeader] = apiKey
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 45000)
+
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: controller.signal,
+      })
+
+      const text = await response.text()
+      let data: unknown = null
+      try {
+        data = text ? JSON.parse(text) : null
+      } catch {
+        data = null
+      }
+
+      if (!response.ok) {
+        const errorMessage = getByPath(data, 'error.message')
+        const messageField = getByPath(data, 'message')
+        const message = typeof errorMessage === 'string'
+          ? errorMessage
+          : typeof messageField === 'string'
+            ? messageField
+            : text || `上传失败: ${response.status}`
+        return { success: false, error: message }
+      }
+
+      const urlField = getByPath(data, provider.responseUrlField || 'url')
+      const deleteField = getByPath(data, provider.responseDeleteUrlField || 'delete_url')
+      const trimmedText = text.trim()
+      const extractedTextUrl = extractFirstHttpUrl(trimmedText)
+
+      if (urlField) {
+        return {
+          success: true,
+          url: typeof urlField === 'string' ? urlField : String(urlField),
+          deleteUrl: deleteField ? (typeof deleteField === 'string' ? deleteField : String(deleteField)) : undefined,
+        }
+      }
+
+      if (extractedTextUrl) {
+        return { success: true, url: extractedTextUrl }
+      }
+
+      console.warn('[ImageHost/Main] Upload succeeded but no URL was detected in the response', {
+        provider: provider.name,
+        platform: provider.platform,
+        responsePreview: trimmedText.substring(0, 200),
+      })
+      return { success: false, error: `图床 ${provider.name} 上传成功但未返回 URL` }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { success: false, error: '上传超时，请稍后重试' }
+      }
+      return { success: false, error: error instanceof Error ? error.message : '上传失败' }
+    } finally {
+      clearTimeout(timeout)
+    }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : '上传失败' }
+  }
 }
 
 // IPC handlers for image management
@@ -457,6 +938,10 @@ ipcMain.handle('get-absolute-path', async (_event, localPath: string) => {
   return null
 })
 
+ipcMain.handle('image-host-upload', async (_event, payload: ImageHostUploadRequest) => {
+  return uploadImageHostFromMain(payload)
+})
+
 // ==================== File Storage for App Data ====================
 const getDataDir = () => {
   const dataDir = getProjectDataRoot()
@@ -515,6 +1000,20 @@ ipcMain.handle('file-storage-exists', async (_event, key: string) => {
     return fs.existsSync(filePath)
   } catch {
     return false
+  }
+})
+
+// List sub-directories under a directory prefix (used to discover project IDs under _p/)
+ipcMain.handle('file-storage-list-dirs', async (_event, prefix: string) => {
+  try {
+    const dirPath = path.join(getDataDir(), prefix)
+    if (!fs.existsSync(dirPath)) return []
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
+    return entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== '_migrated')
+      .map(e => e.name)
+  } catch {
+    return []
   }
 })
 
@@ -835,11 +1334,10 @@ ipcMain.handle('storage-link-media-data', async (_event, dirPath: string) => {
   return { success: true, path: basePath }
 })
 
-ipcMain.handle('storage-move-project-data', async (_event, _newPath: string) => {
+ipcMain.handle('storage-move-project-data', async () => {
   return { success: false, error: '请使用新的统一存储路径功能' }
 })
-
-ipcMain.handle('storage-move-media-data', async (_event, _newPath: string) => {
+ipcMain.handle('storage-move-media-data', async () => {
   return { success: false, error: '请使用新的统一存储路径功能' }
 })
 
@@ -862,28 +1360,62 @@ ipcMain.handle('storage-export-project-data', async (_event, targetPath: string)
 })
 
 ipcMain.handle('storage-import-project-data', async (_event, sourcePath: string) => {
-  // Redirect to unified import
   try {
     if (!sourcePath) return { success: false, error: '路径不能为空' }
     const source = normalizePath(sourcePath)
     const projectsDir = path.join(source, 'projects')
     const mediaDir = path.join(source, 'media')
-    
-    if (fs.existsSync(projectsDir)) {
-      await removeDir(getProjectDataRoot()).catch(() => {})
-      await copyDir(projectsDir, getProjectDataRoot())
-    } else {
-      // Legacy: source is the projects folder itself
-      await removeDir(getProjectDataRoot()).catch(() => {})
-      await copyDir(source, getProjectDataRoot())
+
+    const currentProjectsDir = getProjectDataRoot()
+    const currentMediaDir = getMediaRoot()
+    const backupDir = path.join(os.tmpdir(), `moyin-legacy-import-backup-${Date.now()}`)
+
+    try {
+      if (fs.existsSync(currentProjectsDir)) {
+        const files = await fs.promises.readdir(currentProjectsDir)
+        if (files.length > 0) {
+          await copyDir(currentProjectsDir, path.join(backupDir, 'projects'))
+        }
+      }
+      if (fs.existsSync(currentMediaDir)) {
+        const files = await fs.promises.readdir(currentMediaDir)
+        if (files.length > 0) {
+          await copyDir(currentMediaDir, path.join(backupDir, 'media'))
+        }
+      }
+
+      if (fs.existsSync(projectsDir)) {
+        await removeDir(currentProjectsDir).catch(() => {})
+        await copyDir(projectsDir, currentProjectsDir)
+      } else {
+        await removeDir(currentProjectsDir).catch(() => {})
+        await copyDir(source, currentProjectsDir)
+      }
+
+      if (fs.existsSync(mediaDir)) {
+        await removeDir(currentMediaDir).catch(() => {})
+        await copyDir(mediaDir, currentMediaDir)
+      }
+
+      await removeDir(backupDir).catch(() => {})
+      return { success: true }
+    } catch (importError) {
+      console.error('Legacy import failed, rolling back:', importError)
+      const backupProjectsDir = path.join(backupDir, 'projects')
+      const backupMediaDir = path.join(backupDir, 'media')
+
+      if (fs.existsSync(backupProjectsDir)) {
+        await removeDir(currentProjectsDir).catch(() => {})
+        await copyDir(backupProjectsDir, currentProjectsDir).catch(() => {})
+      }
+      if (fs.existsSync(backupMediaDir)) {
+        await removeDir(currentMediaDir).catch(() => {})
+        await copyDir(backupMediaDir, currentMediaDir).catch(() => {})
+      }
+      await removeDir(backupDir).catch(() => {})
+
+      throw importError
     }
-    
-    if (fs.existsSync(mediaDir)) {
-      await removeDir(getMediaRoot()).catch(() => {})
-      await copyDir(mediaDir, getMediaRoot())
-    }
-    
-    return { success: true }
   } catch (error) {
     return { success: false, error: String(error) }
   }
@@ -914,9 +1446,31 @@ ipcMain.handle('storage-import-media-data', async (_event, sourcePath: string) =
     const target = getMediaRoot()
     const source = normalizePath(sourcePath)
     if (source === target) return { success: true }
-    await removeDir(target)
-    await copyDir(source, target)
-    return { success: true }
+
+    const backupDir = path.join(os.tmpdir(), `moyin-media-import-backup-${Date.now()}`)
+
+    try {
+      if (fs.existsSync(target)) {
+        const files = await fs.promises.readdir(target)
+        if (files.length > 0) {
+          await copyDir(target, backupDir)
+        }
+      }
+
+      await removeDir(target)
+      await copyDir(source, target)
+
+      await removeDir(backupDir).catch(() => {})
+      return { success: true }
+    } catch (importError) {
+      console.error('Media import failed, rolling back:', importError)
+      if (fs.existsSync(backupDir)) {
+        await removeDir(target).catch(() => {})
+        await copyDir(backupDir, target).catch(() => {})
+      }
+      await removeDir(backupDir).catch(() => {})
+      throw importError
+    }
   } catch (error) {
     console.error('Failed to import media data:', error)
     return { success: false, error: String(error) }
@@ -950,6 +1504,48 @@ ipcMain.handle('storage-update-config', async (_event, config: { autoCleanEnable
   saveStorageConfig()
   scheduleAutoClean()
   return true
+})
+
+ipcMain.handle('app-updater-get-current-version', async () => {
+  return app.getVersion()
+})
+
+ipcMain.handle('app-updater-check', async (): Promise<UpdateCheckResult> => {
+  const currentVersion = app.getVersion()
+  try {
+    const update = await resolveAvailableUpdate(currentVersion)
+    return {
+      success: true,
+      currentVersion,
+      hasUpdate: !!update,
+      update,
+    }
+  } catch (error) {
+    console.error('Failed to check updates:', error)
+    return {
+      success: false,
+      currentVersion,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+})
+
+ipcMain.handle('app-updater-open-link', async (_event, url: string): Promise<OpenExternalResult> => {
+  const safeUrl = sanitizeExternalUrl(url)
+  if (!safeUrl) {
+    return { success: false, error: '无效下载链接' }
+  }
+
+  try {
+    await shell.openExternal(safeUrl)
+    return { success: true }
+  } catch (error) {
+    console.error('Failed to open external link:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
 })
 
 // ==================== File Export (Save Dialog) ====================

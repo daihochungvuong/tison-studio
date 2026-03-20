@@ -22,7 +22,10 @@ import type {
 import {
   parseFullScript,
   convertToScriptData,
+  parseScenes,
 } from "./episode-parser";
+import { normalizeScriptFormat, analyzeScriptStructureWithAI, applyAIAnalysis, preprocessLineBreaks } from "./script-normalizer";
+import { populateSeriesMetaFromImport } from "./series-meta-sync";
 import { callFeatureAPI } from "@/lib/ai/feature-router";
 import { processBatched } from "@/lib/ai/batch-processor";
 import { useScriptStore } from "@/stores/script-store";
@@ -37,6 +40,7 @@ import { getVariationForEpisode } from "./character-stage-analyzer";
 import { analyzeSceneViewpoints, type ViewpointAnalysisOptions } from "./viewpoint-analyzer";
 import { runStaggered } from "@/lib/utils/concurrency";
 import { calibrateShotsMultiStage } from "./shot-calibration-stages";
+import { buildSeriesContextSummary } from "./series-meta-sync";
 
 export interface ImportResult {
   success: boolean;
@@ -69,11 +73,32 @@ export interface GenerateEpisodeShotsResult {
  */
 export async function importFullScript(
   fullText: string,
-  projectId: string
+  projectId: string,
+  importSettings?: { styleId?: string; promptLanguage?: PromptLanguage }
 ): Promise<ImportResult> {
   try {
-    // 1. 解析完整剧本
-    const { background, episodes } = parseFullScript(fullText);
+    // -1. 预处理：为单行/超长行文本自动插入换行
+    const preprocessed = preprocessLineBreaks(fullText);
+    const processedText = preprocessed.text;
+    
+    // 0. AI 结构检测（第一步）→ 正则兗底
+    let normalizeResult;
+    const aiAnalysis = await analyzeScriptStructureWithAI(processedText);
+    
+    if (aiAnalysis) {
+      // AI 检测成功：基于 AI 结果插入标记 + 补全大纲
+      normalizeResult = applyAIAnalysis(processedText, aiAnalysis);
+      console.log('[importFullScript] AI 结构检测完成:', normalizeResult.changes);
+    } else {
+      // AI 不可用或失败：降级到正则兗底
+      normalizeResult = normalizeScriptFormat(processedText);
+      if (normalizeResult.changes.length > 0) {
+        console.log('[importFullScript] 正则兜底归一化:', normalizeResult.changes);
+      }
+    }
+    
+    // 1. 解析归一化后的文本
+    const { background, episodes } = parseFullScript(normalizeResult.normalized);
     
     if (episodes.length === 0) {
       return {
@@ -85,10 +110,20 @@ export async function importFullScript(
       };
     }
     
+    // 1.5 用 AI 的 era/genre 覆盖正则检测值（AI 更准确）
+    if (normalizeResult.aiAnalysis) {
+      if (normalizeResult.aiAnalysis.era) {
+        background.era = normalizeResult.aiAnalysis.era;
+      }
+      if (normalizeResult.aiAnalysis.genre) {
+        background.genre = normalizeResult.aiAnalysis.genre;
+      }
+    }
+    
     // 2. 转换为 ScriptData 格式
     const scriptData = convertToScriptData(background, episodes);
     
-    // 3. 保存到 store
+    // 3. 保存到 store（原文保存，归一化文本仅用于解析）
     const store = useScriptStore.getState();
     store.setProjectBackground(projectId, background);
     store.setEpisodeRawScripts(projectId, episodes);
@@ -96,7 +131,12 @@ export async function importFullScript(
     store.setRawScript(projectId, fullText);
     store.setParseStatus(projectId, "ready");
     
-    // 4. 自动生成项目元数据 MD（作为 AI 生成的全局参考）
+    // 4. 构建剧级元数据（SeriesMeta）— 用户选的风格和语言直接传入
+    const aiResult = normalizeResult.aiAnalysis || null;
+    const seriesMeta = populateSeriesMetaFromImport(background, scriptData, aiResult, importSettings);
+    store.setSeriesMeta(projectId, seriesMeta);
+    
+    // 5. 自动生成项目元数据 MD（作为 AI 生成的全局参考）
     const metadataMd = exportProjectMetadata(projectId);
     store.setMetadataMarkdown(projectId, metadataMd);
     console.log('[importFullScript] 元数据已自动生成，长度:', metadataMd.length);
@@ -117,6 +157,213 @@ export async function importFullScript(
       scriptData: null,
       error: error instanceof Error ? error.message : "导入失败",
     };
+  }
+}
+
+// ==================== 单集结构补全 ====================
+
+export interface SingleEpisodeImportResult {
+  success: boolean;
+  sceneCount: number;
+  error?: string;
+}
+
+/**
+ * 单集结构补全 — 解析用户粘贴的单集剧本内容为场景结构
+ *
+ * 流程：
+ * 1. preprocessLineBreaks → parseScenes → 转换为 ScriptScene[]
+ * 2. 原子写回 store（episodeRawScripts + scriptData.scenes + episodes.sceneIds）
+ * 3. 清理本集旧 shot
+ * 4. 轻量 AI 生成标题+大纲（后台不阻塞）
+ */
+export async function importSingleEpisodeContent(
+  rawContent: string,
+  episodeIndex: number,
+  projectId: string,
+): Promise<SingleEpisodeImportResult> {
+  const TAG = '[importSingleEpisodeContent]';
+
+  try {
+    const store = useScriptStore.getState();
+    const project = store.projects[projectId];
+    if (!project?.scriptData) {
+      return { success: false, sceneCount: 0, error: '项目或剧本数据不存在' };
+    }
+
+    const scriptData = project.scriptData;
+    const episode = scriptData.episodes.find(e => e.index === episodeIndex);
+    if (!episode) {
+      return { success: false, sceneCount: 0, error: `找不到第 ${episodeIndex} 集` };
+    }
+
+    // === 1. 预处理 + 场景解析 ===
+    const preprocessed = preprocessLineBreaks(rawContent);
+    const rawScenes = parseScenes(preprocessed.text);
+    console.log(`${TAG} 解析出 ${rawScenes.length} 个场景`);
+
+    if (rawScenes.length === 0) {
+      // 没有场景头也更新 rawContent
+      store.updateEpisodeRawScript(projectId, episodeIndex, {
+        rawContent,
+        scenes: [],
+      });
+      return { success: true, sceneCount: 0 };
+    }
+
+    // === 2. SceneRawContent → ScriptScene ===
+    const timestamp = Date.now();
+    const timeMap: Record<string, string> = {
+      '日': 'day', '夜': 'night', '晨': 'dawn', '暮': 'dusk',
+      '黄昏': 'dusk', '黎明': 'dawn', '清晨': 'dawn', '傍晚': 'dusk',
+    };
+    const newScenes = rawScenes.map((scene, idx) => {
+      const sceneId = `scene_ep${episodeIndex}_${timestamp}_${idx + 1}`;
+      const headerParts = scene.sceneHeader.split(/\s+/);
+      const timeOfDay = headerParts[1] || '日';
+      const hasInterior = headerParts[2] && /^(内|外|内\/外)$/.test(headerParts[2]);
+      const locStart = hasInterior ? 3 : 2;
+      let loc = headerParts.slice(locStart).join(' ') || headerParts[headerParts.length - 1] || '未知';
+      loc = loc.replace(/\s*(?:人物|角色)[：:].*/g, '').trim();
+
+      let atmosphere = '平静';
+      if (/紧张|危险|冲突|打斗|怒/.test(scene.content)) atmosphere = '紧张';
+      else if (/温馨|幸福|笑|欢/.test(scene.content)) atmosphere = '温馨';
+      else if (/悲伤|哭|痛|泪/.test(scene.content)) atmosphere = '悲伤';
+      else if (/神秘|阴森|黑暗/.test(scene.content)) atmosphere = '神秘';
+
+      return {
+        id: sceneId,
+        name: `${episodeIndex}-${idx + 1} ${loc}`,
+        location: loc,
+        time: timeMap[timeOfDay] || 'day',
+        atmosphere,
+      };
+    });
+    const newSceneIds = newScenes.map(s => s.id);
+
+    // === 3. 原子写回 store ===
+    const oldSceneIds = new Set(episode.sceneIds);
+    const remainingScenes = scriptData.scenes.filter(s => !oldSceneIds.has(s.id));
+    const remainingShots = project.shots.filter(s => !oldSceneIds.has(s.sceneRefId));
+
+    // 更新 episodeRawScript
+    store.updateEpisodeRawScript(projectId, episodeIndex, {
+      rawContent,
+      scenes: rawScenes,
+    });
+
+    // 更新 scriptData（场景列表 + episode.sceneIds）
+    store.setScriptData(projectId, {
+      ...scriptData,
+      scenes: [...remainingScenes, ...newScenes],
+      episodes: scriptData.episodes.map(e =>
+        e.index === episodeIndex ? { ...e, sceneIds: newSceneIds } : e
+      ),
+    });
+
+    // 清理旧 shot
+    if (remainingShots.length !== project.shots.length) {
+      store.setShots(projectId, remainingShots);
+      console.log(`${TAG} 清理旧 shot: ${project.shots.length - remainingShots.length} 个`);
+    }
+
+    console.log(`${TAG} 结构补全完成: ${newScenes.length} 个场景`);
+
+    // === 4. 轻量 AI 标题+大纲（后台不阻塞） ===
+    generateSingleEpisodeTitleAndSynopsis(projectId, episodeIndex).catch(e => {
+      console.warn(`${TAG} 标题/大纲生成失败（不影响结构补全）:`, e);
+    });
+
+    return { success: true, sceneCount: newScenes.length };
+  } catch (error) {
+    console.error('[importSingleEpisodeContent] Error:', error);
+    return {
+      success: false,
+      sceneCount: 0,
+      error: error instanceof Error ? error.message : '结构补全失败',
+    };
+  }
+}
+
+/**
+ * 轻量 AI 为单集生成标题+大纲（后台任务，不阻塞结构补全）
+ */
+async function generateSingleEpisodeTitleAndSynopsis(
+  projectId: string,
+  episodeIndex: number,
+): Promise<void> {
+  const store = useScriptStore.getState();
+  const project = store.projects[projectId];
+  if (!project) return;
+
+  const epRaw = project.episodeRawScripts.find(e => e.episodeIndex === episodeIndex);
+  if (!epRaw || !epRaw.rawContent) return;
+
+  // 已有有意义标题和大纲则跳过
+  const hasTitle = epRaw.title && !/^第[\d一二三四五六七八九十百千]+集$/.test(epRaw.title.trim());
+  const hasSynopsis = !!(epRaw.synopsis && epRaw.synopsis.trim().length > 0);
+  if (hasTitle && hasSynopsis) return;
+
+  const background = project.projectBackground;
+  const seriesCtx = buildSeriesContextSummary(project.seriesMeta || null);
+  const contentSummary = epRaw.rawContent.slice(0, 800);
+
+  const system = `你是剧本结构分析专家。根据剧本全局背景和单集内容，生成该集的标题和大纲。
+${seriesCtx ? `\n【剧级知识参考】\n${seriesCtx}\n` : ''}剧名：${background?.title || project.scriptData?.title || '未命名'}
+类型：${background?.genre || '未知'}
+${background?.era ? `时代：${background.era}` : ''}
+
+请以 JSON 格式返回：
+{
+  "title": "6-15字标题（体现本集核心冲突/转折）",
+  "synopsis": "100-200字大纲（概括本集主要剧情）",
+  "keyEvents": ["关键事件1", "关键事件2", "关键事件3"]
+}`;
+
+  const user = `第${episodeIndex}集内容：\n${contentSummary}`;
+
+  try {
+    const result = await callFeatureAPI('script_analysis', system, user, {
+      temperature: 0.3,
+      maxTokens: 512,
+    });
+    if (!result) return;
+
+    const jsonMatch = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return;
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    const updates: Partial<EpisodeRawScript> = {};
+
+    if (!hasTitle && parsed.title) {
+      const fullTitle = `第${episodeIndex}集：${parsed.title}`;
+      updates.title = fullTitle;
+      // 同步到 scriptData.episodes
+      const cur = useScriptStore.getState();
+      const sd = cur.projects[projectId]?.scriptData;
+      if (sd) {
+        cur.setScriptData(projectId, {
+          ...sd,
+          episodes: sd.episodes.map(e =>
+            e.index === episodeIndex ? { ...e, title: fullTitle } : e
+          ),
+        });
+      }
+    }
+
+    if (!hasSynopsis && parsed.synopsis) {
+      updates.synopsis = parsed.synopsis;
+      updates.keyEvents = parsed.keyEvents || [];
+      updates.synopsisGeneratedAt = Date.now();
+    }
+
+    if (Object.keys(updates).length > 0) {
+      useScriptStore.getState().updateEpisodeRawScript(projectId, episodeIndex, updates);
+      console.log(`[generateSingleEpisodeTitleAndSynopsis] 第${episodeIndex}集标题/大纲已生成`);
+    }
+  } catch (e) {
+    console.warn('[generateSingleEpisodeTitleAndSynopsis] AI 调用失败:', e);
   }
 }
 
@@ -893,6 +1140,9 @@ export async function calibrateEpisodeTitles(
     totalEpisodes: project.episodeRawScripts.length,
   };
   
+  // 注入概览里的世界观知识（角色、阵营、时代、力量体系等）
+  const seriesCtx = buildSeriesContextSummary(project.seriesMeta || null);
+  
   try {
     // 准备 batch items
     type TitleItem = { index: number; contentSummary: string };
@@ -914,7 +1164,7 @@ export async function calibrateEpisodeTitles(
 - 市场敏感度：知道什么样的标题能吸引观众，提升点击率
 
 你的任务是根据剧本的全局背景和每集内容，为每集生成简短有吸引力的标题。
-
+${seriesCtx ? `\n【剧级知识参考】\n${seriesCtx}\n` : ''}
 【剧本信息】
 剧名：${title}
 总集数：${totalEpisodes}集
@@ -1123,6 +1373,9 @@ export async function calibrateEpisodeShots(
   // 提取该集的原始剧本内容（对白+动作）
   const episodeRawContent = episodeScript?.rawContent || '';
   
+  // 构建剧级上下文摘要
+  const seriesContextSummary = buildSeriesContextSummary(project.seriesMeta || null);
+  
   const globalContext = {
     title: background?.title || project.scriptData?.title || '未命名剧本',
     genre: background?.genre || '',
@@ -1138,6 +1391,7 @@ export async function calibrateEpisodeShots(
     episodeSeason: episodeScript?.season,  // 本集季节
     totalEpisodes: project.episodeRawScripts.length,
     currentEpisode: episodeIndex,
+    seriesContextSummary,  // 剧级上下文
   };
   
   // 构建原始场景天气映射（从原始解析的场景中获取 weather）
@@ -1480,7 +1734,7 @@ export async function calibrateSingleShot(
         focalLength: calibration.focalLength || s.focalLength,
         photographyTechnique: calibration.photographyTechnique || s.photographyTechnique,
         specialTechnique: calibration.specialTechnique || s.specialTechnique,
-      };
+      } as Shot;
     });
     
     store.setShots(projectId, updatedShots);
@@ -1562,7 +1816,9 @@ async function callAIForShotCalibration(
   soundEffect: string;      // 音效
   // === 叙事驱动字段（基于《电影语言的语法》） ===
   narrativeFunction: string;  // 叙事功能：铺垫/升级/高潮/转折/过渡/尾声
+  conflictStage?: string;     // 冲突阶段
   shotPurpose: string;        // 镜头目的：为什么用这个镜头
+  storyAlignment?: string;    // 与整体叙事的一致性
   visualFocus: string;        // 视觉焦点：观众应该看什么
   cameraPosition: string;     // 机位描述
   characterBlocking: string;  // 人物布局
@@ -2034,6 +2290,9 @@ export async function generateEpisodeSynopses(
     totalEpisodes,
   };
   
+  // 注入概览里的世界观知识（角色、阵营、核心冲突、关键物品等）
+  const seriesCtx = buildSeriesContextSummary(project.seriesMeta || null);
+  
   onProgress?.(0, totalEpisodes, `开始为 ${totalEpisodes} 集生成大纲...`);
   
   try {
@@ -2059,7 +2318,7 @@ export async function generateEpisodeSynopses(
 - 关键事件提取：能准确识别推动剧情发展的关键场景和动作
 
 你的任务是根据剧本全局背景和每集内容，为每集生成简洁的大纲和关键事件。
-
+${seriesCtx ? `\n【剧级知识参考】\n${seriesCtx}\n` : ''}
 【剧本信息】
 剧名：${title}
 类型：${genre || '未知'}
@@ -2178,47 +2437,76 @@ export function exportProjectMetadata(projectId: string): string {
   const background = project.projectBackground;
   const episodes = project.episodeRawScripts;
   const scriptData = project.scriptData;
+  const meta = project.seriesMeta;
   
   const sections: string[] = [];
   
   // 标题
-  const title = background?.title || scriptData?.title || '未命名剧本';
+  const title = meta?.title || background?.title || scriptData?.title || '未命名剧本';
   sections.push(`# 《${title}》`);
   sections.push('');
   
   // 基本信息
   sections.push('## 基本信息');
-  if (background?.genre) sections.push(`- **类型**：${background.genre}`);
-  if (background?.era) sections.push(`- **时代**：${background.era}`);
+  const genre = meta?.genre || background?.genre;
+  const era = meta?.era || background?.era;
+  if (genre) sections.push(`- **类型**：${genre}`);
+  if (era) sections.push(`- **时代**：${era}`);
   sections.push(`- **总集数**：${episodes.length}集`);
-  if (scriptData?.language) sections.push(`- **语言**：${scriptData.language}`);
+  if (meta?.language || scriptData?.language) sections.push(`- **语言**：${meta?.language || scriptData?.language}`);
+  if (meta?.logline) sections.push(`- **Logline**：${meta.logline}`);
+  if (meta?.centralConflict) sections.push(`- **核心冲突**：${meta.centralConflict}`);
+  if (meta?.themes?.length) sections.push(`- **主题**：${meta.themes.join('、')}`);
   sections.push('');
   
   // 故事大纲
-  if (background?.outline) {
+  const outline = meta?.outline || background?.outline;
+  if (outline) {
     sections.push('## 故事大纲');
-    sections.push(background.outline);
+    sections.push(outline);
     sections.push('');
   }
   
   // 世界观设定
-  if (background?.worldSetting) {
-    sections.push('## 世界观/风格设定');
-    sections.push(background.worldSetting);
+  const worldNotes = meta?.worldNotes || background?.worldSetting;
+  if (worldNotes || meta?.powerSystem || meta?.socialSystem) {
+    sections.push('## 世界观设定');
+    if (worldNotes) sections.push(worldNotes);
+    if (meta?.socialSystem) sections.push(`- **社会体系**：${meta.socialSystem}`);
+    if (meta?.powerSystem) sections.push(`- **力量体系**：${meta.powerSystem}`);
     sections.push('');
   }
   
-  // 主要人物
+  // 地理设定
+  if (meta?.geography?.length) {
+    sections.push('## 地理设定');
+    for (const g of meta.geography) {
+      sections.push(`- **${g.name}**：${g.desc}`);
+    }
+    sections.push('');
+  }
+  
+  // 关键物品
+  if (meta?.keyItems?.length) {
+    sections.push('## 关键物品');
+    for (const item of meta.keyItems) {
+      sections.push(`- **${item.name}**：${item.desc}`);
+    }
+    sections.push('');
+  }
+  
+  // 主要人物（原始小传）
   if (background?.characterBios) {
     sections.push('## 主要人物');
     sections.push(background.characterBios);
     sections.push('');
   }
   
-  // 角色列表（结构化）
-  if (scriptData?.characters && scriptData.characters.length > 0) {
+  // 角色列表（结构化）— 优先从 seriesMeta 读取
+  const characters = meta?.characters || scriptData?.characters;
+  if (characters && characters.length > 0) {
     sections.push('## 角色列表');
-    for (const char of scriptData.characters) {
+    for (const char of characters) {
       sections.push(`### ${char.name}`);
       if (char.gender) sections.push(`- 性别：${char.gender}`);
       if (char.age) sections.push(`- 年龄：${char.age}`);
@@ -2226,8 +2514,18 @@ export function exportProjectMetadata(projectId: string): string {
       if (char.personality) sections.push(`- 性格：${char.personality}`);
       if (char.traits) sections.push(`- 特质：${char.traits}`);
       if (char.relationships) sections.push(`- 关系：${char.relationships}`);
+      if (char.skills) sections.push(`- 技能：${char.skills}`);
       sections.push('');
     }
+  }
+  
+  // 阵营/势力
+  if (meta?.factions?.length) {
+    sections.push('## 阵营/势力');
+    for (const f of meta.factions) {
+      sections.push(`- **${f.name}**：${f.members.join('、')}`);
+    }
+    sections.push('');
   }
   
   // 剧集大纲

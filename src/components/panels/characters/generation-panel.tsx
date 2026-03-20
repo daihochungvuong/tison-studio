@@ -11,7 +11,8 @@
 import { useState, useEffect } from "react";
 import { useCharacterLibraryStore, type Character } from "@/stores/character-library-store";
 import { useProjectStore } from "@/stores/project-store";
-import type { CharacterIdentityAnchors, CharacterNegativePrompt } from "@/types/script";
+import type { CharacterIdentityAnchors, CharacterNegativePrompt, PromptLanguage } from "@/types/script";
+import { useActiveScriptProject } from "@/stores/script-store";
 import { useMediaPanelStore } from "@/stores/media-panel-store";
 import { useMediaStore } from "@/stores/media-store";
 import { generateCharacterImage as generateCharacterImageAPI } from "@/lib/ai/image-generator";
@@ -93,6 +94,7 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
     currentFolderId,
   } = useCharacterLibraryStore();
   const { activeProjectId } = useProjectStore();
+  const scriptProject = useActiveScriptProject();
   
   const { pendingCharacterData, setPendingCharacterData } = useMediaPanelStore();
   const { addMediaFromUrl, getOrCreateCategoryFolder } = useMediaStore();
@@ -118,9 +120,13 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
   // === 6层身份锚点 ===
   const [identityAnchors, setIdentityAnchors] = useState<CharacterIdentityAnchors | undefined>();
   const [charNegativePrompt, setCharNegativePrompt] = useState<CharacterNegativePrompt | undefined>();
+  // === 提示词语言偏好 ===
+  const [promptLanguage, setPromptLanguage] = useState<PromptLanguage>('zh');
   // === 年代信息（从剧本元数据传递）===
   const [storyYear, setStoryYear] = useState<number | undefined>();
   const [era, setEra] = useState<string | undefined>();
+  // === 集作用域（从 pending 数据透传）===
+  const [sourceEpisodeId, setSourceEpisodeId] = useState<string | undefined>();
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [styleId, setStyleId] = useState<string>(DEFAULT_STYLE_ID);
   const [selectedElements, setSelectedElements] = useState<SheetElementId[]>(
@@ -131,8 +137,8 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewCharacterId, setPreviewCharacterId] = useState<string | null>(null);
   
-  // AI 校准信息折叠区状态
-  const [calibrationExpanded, setCalibrationExpanded] = useState(false);
+  // AI 校准信息折叠区状态：有数据时默认展开
+  const [calibrationExpanded, setCalibrationExpanded] = useState(true);
   const [isManuallyModified, setIsManuallyModified] = useState(false);
 
   const isGenerating = generationStatus === 'generating';
@@ -205,6 +211,10 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
         setNotes(pendingCharacterData.notes);
       }
       
+      // === 处理提示词语言偏好 ===
+      if (pendingCharacterData.promptLanguage) {
+        setPromptLanguage(pendingCharacterData.promptLanguage);
+      }
       // === 处理专业视觉提示词（世界级大师生成）===
       if (pendingCharacterData.visualPromptEn) {
         setVisualPromptEn(pendingCharacterData.visualPromptEn);
@@ -228,6 +238,8 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
       if (pendingCharacterData.era) {
         setEra(pendingCharacterData.era);
       }
+      // === 集作用域透传 ===
+      setSourceEpisodeId(pendingCharacterData.sourceEpisodeId);
 
       if (pendingCharacterData.styleId) {
         const validStyle = getStyleById(pendingCharacterData.styleId);
@@ -302,6 +314,8 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
     // === 重置年代信息 ===
     setStoryYear(undefined);
     setEra(undefined);
+    // === 重置集作用域 ===
+    setSourceEpisodeId(undefined);
     setReferenceImages([]);
     setStyleId(DEFAULT_STYLE_ID);
     setSelectedElements(SHEET_ELEMENTS.filter(e => e.default).map(e => e.id));
@@ -351,6 +365,8 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
       // === 6层身份锚点（角色一致性）===
       identityAnchors: identityAnchors,
       negativePrompt: charNegativePrompt,
+      // === 集作用域 ===
+      linkedEpisodeId: sourceEpisodeId,
     });
     selectCharacter(targetId);
     onCharacterCreated?.(targetId);
@@ -360,13 +376,17 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
     setGeneratingCharacter(targetId);
 
     try {
-      // 构建提示词：使用6层身份锚点 + 参考图优先级逻辑 + 年代信息
+      // 构建提示词：根据语言偏好选择提示词 + 6层身份锚点 + 参考图优先级逻辑 + 年代信息
+      // 获取实时的语言偏好（优先使用 pending 传来的，其次从 scriptProject 读取）
+      const effectiveLang = promptLanguage || scriptProject?.promptLanguage || 'zh';
       const prompt = buildCharacterSheetPrompt(
         description, 
         name, 
         selectedElements, 
         styleId, 
         visualPromptEn,
+        visualPromptZh,
+        effectiveLang,
         identityAnchors,
         referenceImages.length > 0,  // 有参考图时简化描述
         storyYear,
@@ -468,7 +488,7 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
           <h3 className="font-medium text-sm">预览角色设定图</h3>
         </div>
         <ScrollArea className="flex-1 min-h-0">
-          <div className="p-3 space-y-4">
+          <div className="p-3 space-y-4 pb-32">
             <div className="relative rounded-lg overflow-hidden border-2 border-amber-500/50 bg-muted">
               <img 
                 src={previewUrl} 
@@ -833,36 +853,32 @@ export function GenerationPanel({ selectedCharacter, onCharacterCreated }: Gener
                     </div>
                   )}
                   
-                  {/* 专业视觉提示词 */}
-                  {(visualPromptEn || visualPromptZh) && (
-                    <div className="space-y-2 pt-2 border-t">
-                      <Label className="text-[10px] text-muted-foreground">专业视觉提示词</Label>
-                      {visualPromptEn && (
+                  {/* 专业视觉提示词：根据语言偏好只展示一种，编辑后直接用于生成 */}
+                  {(() => {
+                    const effectiveLang = promptLanguage || scriptProject?.promptLanguage || 'zh';
+                    const showZh = effectiveLang === 'zh' || effectiveLang === 'zh+en';
+                    const activePrompt = showZh ? visualPromptZh : visualPromptEn;
+                    const setActivePrompt = showZh ? setVisualPromptZh : setVisualPromptEn;
+                    const langLabel = showZh ? '中文' : '英文';
+                    if (!activePrompt) return null;
+                    return (
+                      <div className="space-y-2 pt-2 border-t">
+                        <Label className="text-[10px] text-muted-foreground">
+                          视觉提示词（{langLabel}，修改后直接用于生成）
+                        </Label>
                         <Textarea
-                          value={visualPromptEn}
+                          value={activePrompt}
                           onChange={(e) => {
-                            setVisualPromptEn(e.target.value);
+                            setActivePrompt(e.target.value);
                             setIsManuallyModified(true);
                           }}
-                          placeholder="英文提示词"
-                          className="min-h-[40px] text-[10px] resize-none"
+                          placeholder={`${langLabel}提示词`}
+                          className="min-h-[120px] text-xs resize-y"
                           disabled={isGenerating}
                         />
-                      )}
-                      {visualPromptZh && (
-                        <Textarea
-                          value={visualPromptZh}
-                          onChange={(e) => {
-                            setVisualPromptZh(e.target.value);
-                            setIsManuallyModified(true);
-                          }}
-                          placeholder="中文提示词"
-                          className="min-h-[40px] text-[10px] resize-none"
-                          disabled={isGenerating}
-                        />
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -1133,94 +1149,97 @@ function fileToBase64(file: File): Promise<string> {
  */
 function buildPromptFromAnchors(
   anchors: CharacterIdentityAnchors | undefined,
-  hasReferenceImages: boolean
+  hasReferenceImages: boolean,
+  promptLanguage?: PromptLanguage
 ): string {
   if (!anchors) return '';
-  
+
+  // 根据锚点值内容自动检测语言（中文锚点值 → 中文连接词）
+  const isZh = promptLanguage === 'zh' || /[\u4e00-\u9fff]/.test(anchors.faceShape || anchors.eyeShape || '');
+
   const parts: string[] = [];
-  
+
   if (hasReferenceImages) {
     // === 有参考图：只使用最强锚点 ===
-    // ③ 辨识标记层（最强锚点）
     if (anchors.uniqueMarks && anchors.uniqueMarks.length > 0) {
-      parts.push(`distinctive marks: ${anchors.uniqueMarks.join(', ')}`);
+      parts.push(isZh ? `辨识标记：${anchors.uniqueMarks.join('、')}` : `distinctive marks: ${anchors.uniqueMarks.join(', ')}`);
     }
-    
-    // ④ 色彩锚点层（Hex色值 - 极强锚点）
+
     if (anchors.colorAnchors) {
       const colors: string[] = [];
-      if (anchors.colorAnchors.iris) colors.push(`iris color ${anchors.colorAnchors.iris}`);
-      if (anchors.colorAnchors.hair) colors.push(`hair color ${anchors.colorAnchors.hair}`);
-      if (anchors.colorAnchors.skin) colors.push(`skin tone ${anchors.colorAnchors.skin}`);
+      if (anchors.colorAnchors.iris) colors.push(isZh ? `瞳色${anchors.colorAnchors.iris}` : `iris color ${anchors.colorAnchors.iris}`);
+      if (anchors.colorAnchors.hair) colors.push(isZh ? `发色${anchors.colorAnchors.hair}` : `hair color ${anchors.colorAnchors.hair}`);
+      if (anchors.colorAnchors.skin) colors.push(isZh ? `肤色${anchors.colorAnchors.skin}` : `skin tone ${anchors.colorAnchors.skin}`);
       if (colors.length > 0) {
-        parts.push(colors.join(', '));
+        parts.push(colors.join(isZh ? '，' : ', '));
       }
     }
   } else {
     // === 无参考图：完整6层特征锁定 ===
-    
+
     // ① 骨相层
     const boneFeatures: string[] = [];
-    if (anchors.faceShape) boneFeatures.push(`${anchors.faceShape} face`);
-    if (anchors.jawline) boneFeatures.push(`${anchors.jawline} jawline`);
-    if (anchors.cheekbones) boneFeatures.push(`${anchors.cheekbones} cheekbones`);
+    if (anchors.faceShape) boneFeatures.push(isZh ? `${anchors.faceShape}脸` : `${anchors.faceShape} face`);
+    if (anchors.jawline) boneFeatures.push(isZh ? `${anchors.jawline}下颌` : `${anchors.jawline} jawline`);
+    if (anchors.cheekbones) boneFeatures.push(isZh ? `${anchors.cheekbones}颧骨` : `${anchors.cheekbones} cheekbones`);
     if (boneFeatures.length > 0) {
-      parts.push(boneFeatures.join(', '));
+      parts.push(boneFeatures.join(isZh ? '，' : ', '));
     }
-    
+
     // ② 五官层
     const facialFeatures: string[] = [];
-    if (anchors.eyeShape) facialFeatures.push(`${anchors.eyeShape} eyes`);
+    if (anchors.eyeShape) facialFeatures.push(isZh ? `${anchors.eyeShape}眼` : `${anchors.eyeShape} eyes`);
     if (anchors.eyeDetails) facialFeatures.push(anchors.eyeDetails);
     if (anchors.noseShape) facialFeatures.push(anchors.noseShape);
     if (anchors.lipShape) facialFeatures.push(anchors.lipShape);
     if (facialFeatures.length > 0) {
-      parts.push(facialFeatures.join(', '));
+      parts.push(facialFeatures.join(isZh ? '，' : ', '));
     }
-    
-    // ③ 辨识标记层（最强锚点）
+
+    // ③ 辨识标记层
     if (anchors.uniqueMarks && anchors.uniqueMarks.length > 0) {
-      parts.push(`distinctive marks: ${anchors.uniqueMarks.join(', ')}`);
+      parts.push(isZh ? `辨识标记：${anchors.uniqueMarks.join('、')}` : `distinctive marks: ${anchors.uniqueMarks.join(', ')}`);
     }
-    
+
     // ④ 色彩锚点层
     if (anchors.colorAnchors) {
       const colors: string[] = [];
-      if (anchors.colorAnchors.iris) colors.push(`iris ${anchors.colorAnchors.iris}`);
-      if (anchors.colorAnchors.hair) colors.push(`hair ${anchors.colorAnchors.hair}`);
-      if (anchors.colorAnchors.skin) colors.push(`skin ${anchors.colorAnchors.skin}`);
-      if (anchors.colorAnchors.lips) colors.push(`lips ${anchors.colorAnchors.lips}`);
+      if (anchors.colorAnchors.iris) colors.push(isZh ? `瞳色${anchors.colorAnchors.iris}` : `iris ${anchors.colorAnchors.iris}`);
+      if (anchors.colorAnchors.hair) colors.push(isZh ? `发色${anchors.colorAnchors.hair}` : `hair ${anchors.colorAnchors.hair}`);
+      if (anchors.colorAnchors.skin) colors.push(isZh ? `肤色${anchors.colorAnchors.skin}` : `skin ${anchors.colorAnchors.skin}`);
+      if (anchors.colorAnchors.lips) colors.push(isZh ? `唇色${anchors.colorAnchors.lips}` : `lips ${anchors.colorAnchors.lips}`);
       if (colors.length > 0) {
-        parts.push(`color anchors: ${colors.join(', ')}`);
+        parts.push(isZh ? `色彩锚点：${colors.join('，')}` : `color anchors: ${colors.join(', ')}`);
       }
     }
-    
+
     // ⑤ 皮肤纹理层
     if (anchors.skinTexture) {
-      parts.push(`skin texture: ${anchors.skinTexture}`);
+      parts.push(isZh ? `皮肤纹理：${anchors.skinTexture}` : `skin texture: ${anchors.skinTexture}`);
     }
-    
+
     // ⑥ 发型锚点层
     const hairFeatures: string[] = [];
     if (anchors.hairStyle) hairFeatures.push(anchors.hairStyle);
     if (anchors.hairlineDetails) hairFeatures.push(anchors.hairlineDetails);
     if (hairFeatures.length > 0) {
-      parts.push(`hair: ${hairFeatures.join(', ')}`);
+      parts.push(isZh ? `发型：${hairFeatures.join('，')}` : `hair: ${hairFeatures.join(', ')}`);
     }
   }
-  
-  return parts.join(', ');
+
+  return parts.join(isZh ? '，' : ', ');
 }
 
 /**
  * 构建角色设定图提示词
  * 
  * 优先级：
- * 1. 有参考图 + 有锚点：简化描述 + 最强锚点
- * 2. 无参考图 + 有锚点：完整6层锁定
- * 3. 有visualPromptEn：使用AI大师生成的提示词
- * 4. 只有description：使用基础描述
- * 5. 年代信息：加入服装风格锚点
+ * 1. 根据 promptLanguage 选择主提示词：zh→visualPromptZh, en→visualPromptEn, zh+en→两者合并
+ * 2. 有参考图 + 有锚点：简化描述 + 最强锚点
+ * 3. 无参考图 + 有锚点：完整6层锁定
+ * 4. 有视觉提示词：使用AI大师生成的提示词
+ * 5. 只有description：使用基础描述
+ * 6. 年代信息：加入服装风格锚点
  */
 function buildCharacterSheetPrompt(
   description: string, 
@@ -1228,6 +1247,8 @@ function buildCharacterSheetPrompt(
   selectedElements: SheetElementId[],
   styleId?: string,
   visualPromptEn?: string,
+  visualPromptZh?: string,
+  promptLanguage?: PromptLanguage,
   identityAnchors?: CharacterIdentityAnchors,
   hasReferenceImages?: boolean,
   storyYear?: number,
@@ -1236,48 +1257,64 @@ function buildCharacterSheetPrompt(
   const stylePreset = styleId && styleId !== 'random' 
     ? getStyleById(styleId) 
     : null;
-  const styleTokens = stylePreset?.prompt || 'anime style, professional quality';
+  // 修复：自定义风格 prompt 为空时用风格名称兜底，而不是回退到 anime
+  const styleTokens = stylePreset
+    ? (stylePreset.prompt || `${stylePreset.name} style, professional quality`)
+    : 'anime style, professional quality';
   const isRealistic = stylePreset?.category === 'real';
   
-  // 构建年代服装提示词
+  // 根据语言偏好选择主视觉提示词
+  const lang = promptLanguage || 'zh';
+
+  // 构建年代服装提示词（根据语言偏好）
   let eraPrompt = '';
   if (storyYear) {
-    if (storyYear >= 2020) {
-      eraPrompt = `${storyYear}s contemporary Chinese fashion, modern casual style`;
-    } else if (storyYear >= 2010) {
-      eraPrompt = `${storyYear}s Chinese fashion, Korean-influenced style`;
-    } else if (storyYear >= 2000) {
-      eraPrompt = `early 2000s Chinese fashion, millennium era clothing style`;
-    } else if (storyYear >= 1990) {
-      eraPrompt = `1990s Chinese fashion, transitional era clothing`;
-    } else if (storyYear >= 1980) {
-      eraPrompt = `1980s Chinese fashion, reform era clothing style`;
+    if (lang === 'zh') {
+      if (storyYear >= 2020) eraPrompt = `${storyYear}年代当代中国时尚，现代休闲风`;
+      else if (storyYear >= 2010) eraPrompt = `${storyYear}年代中国时尚，韩风影响`;
+      else if (storyYear >= 2000) eraPrompt = `2000年代初期中国时尚，千禧年服饰`;
+      else if (storyYear >= 1990) eraPrompt = `1990年代中国时尚，转型期服饰`;
+      else if (storyYear >= 1980) eraPrompt = `1980年代中国时尚，改革开放时期服饰`;
+      else eraPrompt = `${storyYear}年代中国服饰风格`;
     } else {
-      eraPrompt = `${storyYear}s era-appropriate Chinese clothing`;
+      if (storyYear >= 2020) eraPrompt = `${storyYear}s contemporary Chinese fashion, modern casual style`;
+      else if (storyYear >= 2010) eraPrompt = `${storyYear}s Chinese fashion, Korean-influenced style`;
+      else if (storyYear >= 2000) eraPrompt = `early 2000s Chinese fashion, millennium era clothing style`;
+      else if (storyYear >= 1990) eraPrompt = `1990s Chinese fashion, transitional era clothing`;
+      else if (storyYear >= 1980) eraPrompt = `1980s Chinese fashion, reform era clothing style`;
+      else eraPrompt = `${storyYear}s era-appropriate Chinese clothing`;
     }
   } else if (era) {
-    eraPrompt = `${era} era clothing style`;
+    eraPrompt = lang === 'zh' ? `${era}时期服饰风格` : `${era} era clothing style`;
+  }
+  let primaryVisualPrompt: string | undefined;
+  if (lang === 'zh' || lang === 'zh+en') {
+    // 中文优先（zh+en 只是让用户同时看到两种，生成时用中文）
+    primaryVisualPrompt = visualPromptZh || visualPromptEn;
+  } else {
+    // en：英文优先
+    primaryVisualPrompt = visualPromptEn || visualPromptZh;
   }
   
   // 构建角色描述：根据有无参考图决定使用完整锚点还是简化锚点
   let characterDescription = '';
   
   // 构建身份锚点提示词
-  const anchorPrompt = buildPromptFromAnchors(identityAnchors, hasReferenceImages || false);
+  const anchorPrompt = buildPromptFromAnchors(identityAnchors, hasReferenceImages || false, promptLanguage);
   
   if (hasReferenceImages) {
     // 有参考图：简化描述，让参考图引导主要特征
-    const basicDesc = visualPromptEn ? visualPromptEn.split(',').slice(0, 3).join(',') : description.substring(0, 100);
+    const basicDesc = primaryVisualPrompt ? primaryVisualPrompt.split(/[,，]/).slice(0, 3).join(',') : description.substring(0, 100);
     characterDescription = anchorPrompt 
       ? `${basicDesc}, ${anchorPrompt}` 
       : basicDesc;
   } else if (anchorPrompt) {
     // 无参考图 + 有锚点：完整6层锁定
-    const baseDesc = visualPromptEn || description;
+    const baseDesc = primaryVisualPrompt || description;
     characterDescription = `${baseDesc}, ${anchorPrompt}`;
-  } else if (visualPromptEn) {
-    // 只有AI大师提示词
-    characterDescription = visualPromptEn;
+  } else if (primaryVisualPrompt) {
+    // 使用AI大师提示词（已根据语言偏好选择）
+    characterDescription = primaryVisualPrompt;
   } else {
     // 只有基础描述
     characterDescription = description;
@@ -1287,10 +1324,16 @@ function buildCharacterSheetPrompt(
   if (eraPrompt) {
     characterDescription = `${characterDescription}, ${eraPrompt}`;
   }
-  
+
+  const isZh = lang === 'zh';
+
   const basePrompt = isRealistic
-    ? `professional character reference for "${name}", ${characterDescription}, real person`
-    : `professional character design sheet for "${name}", ${characterDescription}`;
+    ? (isZh
+        ? `专业角色参考图，"${name}"，${characterDescription}，真人写实`
+        : `professional character reference for "${name}", ${characterDescription}, real person`)
+    : (isZh
+        ? `专业角色设计参考图，"${name}"，${characterDescription}`
+        : `professional character design sheet for "${name}", ${characterDescription}`);
   
   // 使用 SHEET_ELEMENTS 定义的 prompt，如果是真人风格则转换成写实/摄影表述
   const contentParts = selectedElements
@@ -1316,9 +1359,13 @@ function buildCharacterSheetPrompt(
   const whiteBackgroundPrompt = "pure solid white background, isolated character on white background, absolutely no background scenery";
   
   if (isRealistic) {
-    return `${basePrompt}, ${contentPrompt}, photographic character reference layout, collage format, ${whiteBackgroundPrompt}, ${styleTokens}, cinematic lighting, highly detailed skin texture, photorealistic`;
+    return isZh
+      ? `${basePrompt}, ${contentPrompt}, 摄影角色参考图版式, 拼贴格式, ${whiteBackgroundPrompt}, ${styleTokens}, 电影级灯光, 高细节皮肤纹理, 照片写实`
+      : `${basePrompt}, ${contentPrompt}, photographic character reference layout, collage format, ${whiteBackgroundPrompt}, ${styleTokens}, cinematic lighting, highly detailed skin texture, photorealistic`;
   } else {
-    return `${basePrompt}, ${contentPrompt}, character reference sheet layout, ${whiteBackgroundPrompt}, ${styleTokens}, detailed illustration`;
+    return isZh
+      ? `${basePrompt}, ${contentPrompt}, 角色参考图版式, ${whiteBackgroundPrompt}, ${styleTokens}, 精细插画`
+      : `${basePrompt}, ${contentPrompt}, character reference sheet layout, ${whiteBackgroundPrompt}, ${styleTokens}, detailed illustration`;
   }
 }
 

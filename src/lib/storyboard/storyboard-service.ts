@@ -58,10 +58,10 @@ async function submitImageGenTask(
   baseUrl?: string
 ): Promise<{ taskId?: string; imageUrl?: string; estimatedTime?: number }> {
   if (!model) {
-    throw new Error('请先在设置中配置图片生成模型');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆鍥剧墖鐢熸垚妯″瀷');
   }
   if (!baseUrl) {
-    throw new Error('请先在设置中配置图片生成服务映射');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆鍥剧墖鐢熸垚鏈嶅姟鏄犲皠');
   }
   const actualModel = model;
   const actualBaseUrl = baseUrl.replace(/\/+$/, '');
@@ -115,7 +115,7 @@ async function submitImageGenTask(
         const errorText = await response.text();
         console.error('[StoryboardService] Image API error:', response.status, errorText);
 
-        let errorMessage = `图片生成 API 错误: ${response.status}`;
+        let errorMessage = `鍥剧墖鐢熸垚 API 閿欒: ${response.status}`;
         try {
           const errorJson = JSON.parse(errorText);
           errorMessage = errorJson.error?.message || errorJson.message || errorJson.msg || errorMessage;
@@ -125,14 +125,13 @@ async function submitImageGenTask(
           }
         }
 
-        if (response.status === 401 || response.status === 403) {
-          throw new Error('API Key 无效或已过期，请检查配置');
-        } else if (response.status >= 500) {
-          throw new Error('图片生成服务暂时不可用，请稍后再试');
-        }
-
-        // Create error with status for retry logic
-        const error = new Error(errorMessage) as Error & { status?: number };
+        const error = new Error(
+          response.status === 401 || response.status === 403
+            ? 'API Key 无效或已过期，请检查配置'
+            : response.status >= 500
+              ? '图片生成服务暂时不可用，请稍后再试'
+              : errorMessage
+        ) as Error & { status?: number };
         error.status = response.status;
         throw error;
       }
@@ -175,7 +174,7 @@ async function submitImageGenTask(
     clearTimeout(timeoutId);
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
-        throw new Error('图片生成 API 请求超时，请稍后再试');
+        throw new Error('鍥剧墖鐢熸垚 API 璇锋眰瓒呮椂锛岃绋嶅悗鍐嶈瘯');
       }
       throw error;
     }
@@ -194,10 +193,10 @@ async function submitZhipuImageTask(
   baseUrl?: string
 ): Promise<{ taskId?: string; imageUrl?: string; estimatedTime?: number }> {
   if (!model) {
-    throw new Error('请先在设置中配置图片生成模型');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆鍥剧墖鐢熸垚妯″瀷');
   }
   if (!baseUrl) {
-    throw new Error('请先在设置中配置图片生成服务映射');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆鍥剧墖鐢熸垚鏈嶅姟鏄犲皠');
   }
   const endpoint = buildEndpoint(baseUrl, 'images/generations');
   const response = await fetch(endpoint, {
@@ -216,7 +215,9 @@ async function submitZhipuImageTask(
   if (!response.ok) {
     const errorText = await response.text();
     console.error('[StoryboardService] Zhipu error:', response.status, errorText);
-    throw new Error(`Zhipu API error: ${response.status}`);
+    const error = new Error(`Zhipu API error: ${response.status}`) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
 
   const data = await response.json();
@@ -242,9 +243,9 @@ async function submitZhipuImageTask(
 async function pollTaskCompletion(
   taskId: string,
   apiKey: string,
+  baseUrl: string,
   onProgress?: (progress: number) => void,
-  type: 'image' | 'video' = 'image',
-  baseUrl: string
+  type: 'image' | 'video' = 'image'
 ): Promise<string> {
   const maxAttempts = 120;
   const pollInterval = 2000;
@@ -260,7 +261,7 @@ async function pollTaskCompletion(
 
     try {
       // Add cache-busting timestamp (matching director_ai)
-      // 使用传入的 baseUrl 而不是硬编码
+      // 浣跨敤浼犲叆鐨?baseUrl 鑰屼笉鏄‖缂栫爜
       const url = new URL(buildEndpoint(baseUrl, `tasks/${taskId}`));
       url.searchParams.set('_ts', Date.now().toString());
 
@@ -426,7 +427,7 @@ export async function generateStoryboardImage(
 
   // Validate API key
   if (!apiKey) {
-    throw new Error('请先在设置中配置 API Key');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆 API Key');
   }
 
   onProgress?.(10);
@@ -436,11 +437,11 @@ export async function generateStoryboardImage(
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, '');
   if (!baseUrl) {
-    throw new Error('请先在设置中配置图片生成服务映射');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆鍥剧墖鐢熸垚鏈嶅姟鏄犲皠');
   }
   const model = config.model;
   if (!model) {
-    throw new Error('请先在设置中配置图片生成模型');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆鍥剧墖鐢熸垚妯″瀷');
   }
 
   // Use submitGridImageRequest for smart routing (auto-detects chat/completions vs images/generations)
@@ -480,15 +481,15 @@ export async function generateStoryboardImage(
 
   // If taskId is returned, poll for completion
   if (result.taskId) {
-    // 使用与提交任务相同的 baseUrl 进行轮询
+    // 浣跨敤涓庢彁浜や换鍔＄浉鍚岀殑 baseUrl 杩涜杞
     const imageUrl = await pollTaskCompletion(
       result.taskId,
       apiKey,
+      baseUrl,
       (progress) => {
         onProgress?.(30 + Math.floor(progress * 0.7));
       },
-      'image',
-      baseUrl
+      'image'
     );
 
     return {
@@ -519,10 +520,10 @@ async function submitVideoGenTask(
   videoResolution?: '480p' | '720p' | '1080p'
 ): Promise<{ taskId?: string; videoUrl?: string; estimatedTime?: number }> {
   if (!model) {
-    throw new Error('请先在设置中配置视频生成模型');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆瑙嗛鐢熸垚妯″瀷');
   }
   if (!baseUrl) {
-    throw new Error('请先在设置中配置视频生成服务映射');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆瑙嗛鐢熸垚鏈嶅姟鏄犲皠');
   }
   const actualModel = model;
   const actualBaseUrl = baseUrl.replace(/\/+$/, '');
@@ -635,11 +636,11 @@ async function submitVideoGenTask(
 async function pollVideoTaskCompletion(
   taskId: string,
   apiKey: string,
-  onProgress?: (progress: number) => void,
-  baseUrl: string
+  baseUrl: string,
+  onProgress?: (progress: number) => void
 ): Promise<string> {
   // Use the unified polling function with video type and dynamic baseUrl
-  return pollTaskCompletion(taskId, apiKey, onProgress, 'video', baseUrl);
+  return pollTaskCompletion(taskId, apiKey, baseUrl, onProgress, 'video');
 }
 
 /**
@@ -680,7 +681,7 @@ export async function generateSceneVideos(
 
   // Validate API key
   if (!apiKey && !mockMode) {
-    throw new Error('请先在设置中配置 API Key');
+    throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆 API Key');
   }
 
   // Process scenes sequentially with rate limiting
@@ -712,7 +713,7 @@ export async function generateSceneVideos(
       if (provider !== 'zhipu') {
         const resolvedBaseUrl = baseUrl?.replace(/\/+$/, '');
         if (!resolvedBaseUrl) {
-          throw new Error('请先在设置中配置视频生成服务映射');
+          throw new Error('璇峰厛鍦ㄨ缃腑閰嶇疆瑙嗛鐢熸垚鏈嶅姟鏄犲皠');
         }
         const result = await submitVideoGenTask(
           scene.imageDataUrl,
@@ -740,10 +741,10 @@ export async function generateSceneVideos(
           const videoUrl = await pollVideoTaskCompletion(
             result.taskId,
             apiKey,
+            resolvedBaseUrl, // 浣跨敤涓庢彁浜や换鍔＄浉鍚岀殑 baseUrl
             (progress) => {
               onSceneProgress?.(scene.id, 30 + Math.floor(progress * 0.7));
-            },
-            resolvedBaseUrl // 使用与提交任务相同的 baseUrl
+            }
           );
 
           results.set(scene.id, videoUrl);
@@ -764,3 +765,4 @@ export async function generateSceneVideos(
 
   return results;
 }
+

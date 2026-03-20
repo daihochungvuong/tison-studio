@@ -6,7 +6,7 @@
  * Defines message types between main thread and AI Worker
  */
 
-import type { AIScreenplay, AIScene, GenerationConfig, SceneProgress } from '../types';
+import type { AIScreenplay, AIScene, GenerationConfig, SceneProgress, CharacterBibleLike } from '../types';
 
 // ==================== Main Thread -> Worker Commands ====================
 
@@ -17,6 +17,8 @@ export type WorkerCommand =
   | PingCommand
   | GenerateScreenplayCommand
   | ExecuteScreenplayCommand
+  | ExecuteScreenplayImagesCommand
+  | ExecuteScreenplayVideosCommand
   | ExecuteSceneCommand
   | RetrySceneCommand
   | CancelCommand
@@ -50,7 +52,24 @@ export interface ExecuteSceneCommand {
     screenplayId: string;
     scene: AIScene;
     config: GenerationConfig;
-    characterBible?: string;
+    characterBible?: CharacterBibleLike | string;
+    characterReferenceImages?: string[];
+  };
+}
+
+export interface ExecuteScreenplayImagesCommand {
+  type: 'EXECUTE_SCREENPLAY_IMAGES';
+  payload: {
+    screenplay: AIScreenplay;
+    config: GenerationConfig;
+  };
+}
+
+export interface ExecuteScreenplayVideosCommand {
+  type: 'EXECUTE_SCREENPLAY_VIDEOS';
+  payload: {
+    screenplay: AIScreenplay;
+    config: GenerationConfig;
   };
 }
 
@@ -85,6 +104,8 @@ export type WorkerEvent =
   | ScreenplayReadyEvent
   | ScreenplayErrorEvent
   | SceneProgressEvent
+  | SceneImageCompletedEvent
+  | AllImagesCompletedEvent
   | SceneCompletedEvent
   | SceneFailedEvent
   | AllScenesCompletedEvent
@@ -126,12 +147,33 @@ export interface SceneCompletedEvent {
     screenplayId: string;
     sceneId: number;
     mediaBlob: Blob;
+    mediaId?: string;
     metadata: {
       duration: number;
       width: number;
       height: number;
       mimeType: string;
     };
+  };
+}
+
+export interface SceneImageCompletedEvent {
+  type: 'SCENE_IMAGE_COMPLETED';
+  payload: {
+    screenplayId: string;
+    sceneId: number;
+    imageUrl: string;
+  };
+}
+
+export interface AllImagesCompletedEvent {
+  type: 'ALL_IMAGES_COMPLETED';
+  payload: {
+    screenplayId: string;
+    completedCount: number;
+    failedCount: number;
+    totalCount: number;
+    error?: string;
   };
 }
 
@@ -149,8 +191,10 @@ export interface AllScenesCompletedEvent {
   type: 'ALL_SCENES_COMPLETED';
   payload: {
     screenplayId: string;
-    totalScenes: number;
-    successCount: number;
+    totalScenes?: number;
+    totalCount?: number;
+    successCount?: number;
+    completedCount?: number;
     failedCount: number;
   };
 }

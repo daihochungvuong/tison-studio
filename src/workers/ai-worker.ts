@@ -15,7 +15,7 @@ import type {
   ExecuteSceneCommand,
   CancelCommand,
 } from '@opencut/ai-core/protocol';
-import type { AIScreenplay, AIScene, GenerationConfig, AICharacter, CharacterBible } from '@opencut/ai-core';
+import type { AIScreenplay, AIScene, GenerationConfig, AICharacter, CharacterBibleLike } from '@opencut/ai-core';
 import { PromptCompiler } from '@opencut/ai-core/services/prompt-compiler';
 import { TaskPoller } from '@opencut/ai-core/api/task-poller';
 
@@ -74,6 +74,13 @@ const promptCompiler = new PromptCompiler();
 
 // Task poller for async operations
 const taskPoller = new TaskPoller();
+
+function getBibleCharacters(characterBible?: CharacterBibleLike | string, fallback: AICharacter[] = []): AICharacter[] {
+  if (!characterBible || typeof characterBible === 'string') {
+    return fallback;
+  }
+  return Array.isArray(characterBible.characters) ? characterBible.characters : fallback;
+}
 
 // ==================== State ====================
 
@@ -340,9 +347,14 @@ async function pollTaskCompletion(
       throw new Error('Cancelled');
     }
     
-    // Task polling requires apiKey and provider as query params
+    // API Key 通过 Header 传递，避免明文出现在 URL 中（安全风险：URL 会被日志/历史记录）
     const statusResponse = await fetch(
-      buildApiUrl(`/api/ai/task/${taskId}?provider=${provider}&type=${type}&apiKey=${encodeURIComponent(apiKey)}`)
+      buildApiUrl(`/api/ai/task/${taskId}?provider=${provider}&type=${type}`),
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+        },
+      }
     );
     
     if (!statusResponse.ok) {
@@ -406,7 +418,8 @@ async function fetchAsBlob(url: string): Promise<Blob> {
 
 async function handleExecuteScene(command: ExecuteSceneCommand): Promise<void> {
   const { screenplayId, scene, config, characterBible, characterReferenceImages } = command.payload;
-  
+  cancelled = false; // 新操作启动时重置取消标志
+
   console.log(`[AI Worker] Executing scene ${scene.sceneId} for screenplay ${screenplayId}`);
   
   // Check cancellation
@@ -420,7 +433,7 @@ async function handleExecuteScene(command: ExecuteSceneCommand): Promise<void> {
   
   try {
     // Extract characters from bible for consistency
-    const characters = characterBible?.characters || [];
+    const characters = getBibleCharacters(characterBible);
     
     // Get character reference images (base64 or URL)
     // These are used to maintain visual consistency across scenes
@@ -561,7 +574,8 @@ function reportSceneFailed(
  */
 async function handleExecuteScreenplay(command: { type: string; payload: { screenplay: AIScreenplay; config: GenerationConfig } }): Promise<void> {
   const { screenplay, config } = command.payload;
-  
+  cancelled = false; // 新操作启动时重置取消标志
+
   console.log(`[AI Worker] Executing screenplay ${screenplay.id} with ${screenplay.scenes.length} scenes`);
   
   // Set baseUrl if provided
@@ -641,7 +655,8 @@ async function handleExecuteScreenplay(command: { type: string; payload: { scree
  */
 async function handleExecuteScreenplayImages(command: { type: string; payload: { screenplay: AIScreenplay; config: GenerationConfig } }): Promise<void> {
   const { screenplay, config } = command.payload;
-  
+  cancelled = false; // 新操作启动时重置取消标志
+
   console.log(`[AI Worker] Generating images for screenplay ${screenplay.id} with ${screenplay.scenes.length} scenes`);
   
   // Set baseUrl if provided
@@ -743,7 +758,8 @@ async function handleExecuteScreenplayImages(command: { type: string; payload: {
  */
 async function handleExecuteScreenplayVideos(command: { type: string; payload: { screenplay: AIScreenplay; config: GenerationConfig } }): Promise<void> {
   const { screenplay, config } = command.payload;
-  
+  cancelled = false; // 新操作启动时重置取消标志
+
   console.log(`[AI Worker] Generating videos for screenplay ${screenplay.id} with ${screenplay.scenes.length} scenes`);
   
   // Debug: Log each scene's imageUrl
@@ -829,7 +845,7 @@ async function generateSceneImageOnly(
   screenplayId: string,
   scene: AIScene,
   config: GenerationConfig & { mockImage?: boolean },
-  characterBible?: CharacterBible,
+  characterBible?: CharacterBibleLike | string,
   characterReferenceImages?: string[]
 ): Promise<void> {
   console.log(`[AI Worker] Generating image for scene ${scene.sceneId}`);
@@ -871,7 +887,7 @@ async function generateSceneImageOnly(
   
   try {
     // Extract characters from bible for consistency
-    const characters = characterBible?.characters || [];
+    const characters = getBibleCharacters(characterBible);
     
     // Get character reference images
     const refImages = characterReferenceImages || (config as any).characterReferenceImages || [];
@@ -926,7 +942,7 @@ async function generateSceneVideoOnly(
   screenplayId: string,
   scene: AIScene,
   config: GenerationConfig & { mockVideo?: boolean },
-  characterBible?: CharacterBible,
+  characterBible?: CharacterBibleLike | string,
   characterReferenceImages?: string[]
 ): Promise<void> {
   console.log(`[AI Worker] Generating video for scene ${scene.sceneId}`);
@@ -976,7 +992,7 @@ async function generateSceneVideoOnly(
   
   try {
     // Extract characters from bible for consistency
-    const characters = characterBible?.characters || [];
+    const characters = getBibleCharacters(characterBible);
     
     // Get character reference images
     const refImages = characterReferenceImages || (config as any).characterReferenceImages || [];
@@ -1038,7 +1054,7 @@ async function executeSceneInternal(
   screenplayId: string,
   scene: AIScene,
   config: GenerationConfig & { mockImage?: boolean; mockVideo?: boolean },
-  characterBible?: CharacterBible,
+  characterBible?: CharacterBibleLike | string,
   characterReferenceImages?: string[]
 ): Promise<void> {
   console.log(`[AI Worker] Executing scene ${scene.sceneId} for screenplay ${screenplayId}`);
@@ -1089,7 +1105,7 @@ async function executeSceneInternal(
   
   try {
     // Extract characters from bible for consistency
-    const characters = characterBible?.characters || [];
+    const characters = getBibleCharacters(characterBible);
     
     // Get character reference images
     const refImages = characterReferenceImages || (config as any).characterReferenceImages || [];
@@ -1178,11 +1194,7 @@ async function executeSceneInternal(
 function handleCancel(command: CancelCommand): void {
   console.log('[AI Worker] Cancelling operations');
   cancelled = true;
-  
-  // Reset after a short delay to allow for new operations
-  setTimeout(() => {
-    cancelled = false;
-  }, 100);
+  // 不自动重置 cancelled 标志，由新的生成操作启动时重置
 }
 
 // ==================== Helpers ====================

@@ -90,6 +90,7 @@ export interface SplitSceneCardProps {
   onUpdateNeedsEndFrame: (id: number, needsEndFrame: boolean) => void;
   onUpdateEndFrame: (id: number, imageUrl: string | null) => void;
   onUpdateCharacters: (id: number, characterIds: string[]) => void;
+  onUpdateCharacterVariationMap?: (id: number, map: Record<string, string>) => void;
   onUpdateEmotions: (id: number, emotionTags: EmotionTag[]) => void;
   onUpdateShotSize: (id: number, shotSize: ShotSizeType | null) => void;
   onUpdateDuration: (id: number, duration: DurationType) => void;
@@ -131,6 +132,7 @@ export function SClassSceneCard({
   onUpdateNeedsEndFrame,
   onUpdateEndFrame,
   onUpdateCharacters,
+  onUpdateCharacterVariationMap,
   onUpdateEmotions,
   onUpdateShotSize,
   onUpdateDuration,
@@ -691,6 +693,16 @@ export function SClassSceneCard({
             <CharacterSelector
               selectedIds={scene.characterIds || []}
               onChange={(ids) => onUpdateCharacters(scene.id, ids)}
+              characterVariationMap={scene.characterVariationMap}
+              onChangeVariation={(charId, varId) => {
+                const current = { ...(scene.characterVariationMap || {}) };
+                if (varId) {
+                  current[charId] = varId;
+                } else {
+                  delete current[charId];
+                }
+                onUpdateCharacterVariationMap?.(scene.id, current);
+              }}
               disabled={isGeneratingAny}
             />
             {onUpdateSceneReference && (

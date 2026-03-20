@@ -93,7 +93,9 @@ export function ExtendEditDialog({
       name: `${sourceGroup.name} - ${mode === "extend" ? "延长" : "编辑"}`,
       sceneIds: [...sourceGroup.sceneIds],
       sortIndex: sourceGroup.sortIndex + 0.5,
-      totalDuration: mode === "extend" ? Math.max(4, Math.min(15, duration)) : (sourceGroup.totalDuration || 10),
+      totalDuration: (mode === "extend"
+        ? Math.max(4, Math.min(15, duration))
+        : (sourceGroup.totalDuration || 10)) as ShotGroup["totalDuration"],
       videoStatus: "idle",
       videoProgress: 0,
       videoUrl: null,
@@ -101,15 +103,16 @@ export function ExtendEditDialog({
       videoError: null,
       gridImageUrl: null,
       lastPrompt: null,
-      mergedPrompt: description.trim() || null,
+      mergedPrompt: description.trim() || sourceGroup.mergedPrompt || "",
       history: [],
+      imageRefs: [],
       videoRefs: [],
       audioRefs: [],
       generationType: mode,
       extendDirection: mode === "extend" ? direction : undefined,
       editType: mode === "edit" ? editType : undefined,
       sourceGroupId: sourceGroup.id,
-      sourceVideoUrl: sourceGroup.videoUrl,
+      sourceVideoUrl: sourceGroup.videoUrl || undefined,
     };
 
     addShotGroup(childGroup);

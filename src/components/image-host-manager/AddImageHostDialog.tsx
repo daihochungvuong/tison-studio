@@ -24,37 +24,11 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import type { ImageHostProvider, ImageHostPlatform } from "@/stores/api-config-store";
-
-const IMAGE_HOST_PRESETS: Array<Omit<ImageHostProvider, "id" | "apiKey">> = [
-  {
-    platform: "imgbb",
-    name: "imgbb",
-    baseUrl: "https://api.imgbb.com",
-    uploadPath: "/1/upload",
-    enabled: true,
-    apiKeyParam: "key",
-    expirationParam: "expiration",
-    imageField: "image",
-    nameField: "name",
-    responseUrlField: "data.url",
-    responseDeleteUrlField: "data.delete_url",
-  },
-  {
-    platform: "custom",
-    name: "自定义图床",
-    baseUrl: "",
-    uploadPath: "",
-    enabled: true,
-  },
-  {
-    platform: "cloudflare_r2",
-    name: "Cloudflare R2",
-    baseUrl: "",
-    uploadPath: "",
-    enabled: false,
-  },
-];
+import {
+  IMAGE_HOST_PRESETS,
+  type ImageHostProvider,
+  type ImageHostPlatform,
+} from "@/stores/api-config-store";
 
 interface AddImageHostDialogProps {
   open: boolean;
@@ -67,7 +41,7 @@ export function AddImageHostDialog({
   onOpenChange,
   onSubmit,
 }: AddImageHostDialogProps) {
-  const [platform, setPlatform] = useState<ImageHostPlatform>("imgbb");
+  const [platform, setPlatform] = useState<ImageHostPlatform>("scdn");
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [uploadPath, setUploadPath] = useState("");
@@ -75,17 +49,36 @@ export function AddImageHostDialog({
   const [enabled, setEnabled] = useState(true);
   const [apiKeyParam, setApiKeyParam] = useState("");
   const [apiKeyHeader, setApiKeyHeader] = useState("");
+  const [apiKeyFormField, setApiKeyFormField] = useState("");
+  const [apiKeyOptional, setApiKeyOptional] = useState(false);
   const [expirationParam, setExpirationParam] = useState("");
   const [imageField, setImageField] = useState("");
+  const [imagePayloadType, setImagePayloadType] = useState<ImageHostProvider["imagePayloadType"]>("base64");
   const [nameField, setNameField] = useState("");
+  const [staticFormFields, setStaticFormFields] = useState<Record<string, string> | undefined>(undefined);
   const [responseUrlField, setResponseUrlField] = useState("");
   const [responseDeleteUrlField, setResponseDeleteUrlField] = useState("");
 
   const selectedPreset = IMAGE_HOST_PRESETS.find((p) => p.platform === platform);
+  const apiKeyLabel = platform === "imgurl"
+    ? "上传 Tokens"
+    : platform === "scdn"
+      ? "API Key（无需填写）"
+    : platform === "catbox"
+      ? "Userhash（可选）"
+      : "API Keys";
+  const apiKeyRequiredMessage = platform === "imgurl" ? "请输入上传 Token" : "请输入 API Key";
+  const apiKeyPlaceholder = platform === "imgurl"
+    ? "输入上传 Token / Authorization 值（每行一个；如需 Bearer，请手动填写完整值）"
+    : platform === "scdn"
+      ? "留空即可，SCDN 支持直接上传"
+    : platform === "catbox"
+      ? "可留空匿名上传；如需绑定到 Catbox 账号，请填写 userhash"
+    : "输入 API Keys（每行一个，或用逗号分隔）";
 
   useEffect(() => {
     if (open) {
-      const defaultPreset = IMAGE_HOST_PRESETS[0]; // imgbb
+      const defaultPreset = IMAGE_HOST_PRESETS.find((preset) => preset.platform === "scdn") || IMAGE_HOST_PRESETS[0];
       setPlatform(defaultPreset.platform as ImageHostPlatform);
       setName(defaultPreset.name || "");
       setBaseUrl(defaultPreset.baseUrl || "");
@@ -94,9 +87,13 @@ export function AddImageHostDialog({
       setEnabled(defaultPreset.enabled ?? true);
       setApiKeyParam(defaultPreset.apiKeyParam || "");
       setApiKeyHeader(defaultPreset.apiKeyHeader || "");
+      setApiKeyFormField(defaultPreset.apiKeyFormField || "");
+      setApiKeyOptional(defaultPreset.apiKeyOptional ?? false);
       setExpirationParam(defaultPreset.expirationParam || "");
       setImageField(defaultPreset.imageField || "");
+      setImagePayloadType(defaultPreset.imagePayloadType || "base64");
       setNameField(defaultPreset.nameField || "");
+      setStaticFormFields(defaultPreset.staticFormFields);
       setResponseUrlField(defaultPreset.responseUrlField || "");
       setResponseDeleteUrlField(defaultPreset.responseDeleteUrlField || "");
     }
@@ -110,9 +107,13 @@ export function AddImageHostDialog({
       setEnabled(selectedPreset.enabled ?? true);
       setApiKeyParam(selectedPreset.apiKeyParam || "");
       setApiKeyHeader(selectedPreset.apiKeyHeader || "");
+      setApiKeyFormField(selectedPreset.apiKeyFormField || "");
+      setApiKeyOptional(selectedPreset.apiKeyOptional ?? false);
       setExpirationParam(selectedPreset.expirationParam || "");
       setImageField(selectedPreset.imageField || "");
+      setImagePayloadType(selectedPreset.imagePayloadType || "base64");
       setNameField(selectedPreset.nameField || "");
+      setStaticFormFields(selectedPreset.staticFormFields);
       setResponseUrlField(selectedPreset.responseUrlField || "");
       setResponseDeleteUrlField(selectedPreset.responseDeleteUrlField || "");
     }
@@ -127,8 +128,8 @@ export function AddImageHostDialog({
       toast.error("请配置 Base URL 或 Upload Path");
       return;
     }
-    if (!apiKey.trim()) {
-      toast.error("请输入 API Key");
+    if (!apiKey.trim() && !apiKeyOptional) {
+      toast.error(apiKeyRequiredMessage);
       return;
     }
 
@@ -141,9 +142,13 @@ export function AddImageHostDialog({
       enabled,
       apiKeyParam: apiKeyParam.trim() || undefined,
       apiKeyHeader: apiKeyHeader.trim() || undefined,
+      apiKeyFormField: apiKeyFormField.trim() || undefined,
+      apiKeyOptional,
       expirationParam: expirationParam.trim() || undefined,
       imageField: imageField.trim() || undefined,
+      imagePayloadType,
       nameField: nameField.trim() || undefined,
+      staticFormFields,
       responseUrlField: responseUrlField.trim() || undefined,
       responseDeleteUrlField: responseDeleteUrlField.trim() || undefined,
     });
@@ -193,14 +198,34 @@ export function AddImageHostDialog({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label>API Keys</Label>
+              <Label>{apiKeyLabel}</Label>
             </div>
             <Textarea
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="输入 API Keys（每行一个，或用逗号分隔）"
+              placeholder={apiKeyPlaceholder}
               className="font-mono text-sm min-h-[80px]"
             />
+            {platform === "imgbb" && (
+              <p className="text-xs text-red-500">
+                ImgBB 当前可用性存在问题，默认保持关闭；建议优先使用 Catbox。
+              </p>
+            )}
+            {platform === "imgurl" && (
+              <p className="text-xs text-muted-foreground">
+                使用 ImgURL / Zpic 开放接口里的上传 Token（V3），支持多 Token 轮换。
+              </p>
+            )}
+            {platform === "scdn" && (
+              <p className="text-xs text-muted-foreground">
+                SCDN 图床支持直接上传，当前更适合作为默认图床使用。
+              </p>
+            )}
+            {platform === "catbox" && (
+              <p className="text-xs text-muted-foreground">
+                Catbox 为海外图床；如果当前网络连不上，建议改用 SCDN 图床或自定义图床。
+              </p>
+            )}
           </div>
 
           <div className="flex items-center justify-between">

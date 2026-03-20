@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { getStyleTokens as getStyleTokensFromLib } from "@/lib/constants/visual-styles";
 
 interface ShotListProps {
   projectId: string;
@@ -58,19 +59,9 @@ export function ShotList({ projectId, shots, styleId }: ShotListProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingShotId, setGeneratingShotId] = useState<string | null>(null);
 
-  // Get style tokens based on styleId
-  const getStyleTokens = (): string[] => {
-    const styleMap: Record<string, string[]> = {
-      ghibli: ["Studio Ghibli style", "anime", "soft colors", "hand-drawn"],
-      miyazaki: ["Miyazaki style", "detailed backgrounds", "fantasy", "nature elements"],
-      disney: ["Disney animation style", "3D render", "vibrant colors"],
-      pixar: ["Pixar style", "3D animation", "detailed textures", "cinematic lighting"],
-      anime: ["anime style", "manga art", "2D animation", "cel shaded"],
-      cinematic: ["cinematic movie still", "shot on 35mm film", "dramatic lighting"],
-      documentary: ["documentary photography", "National Geographic style", "natural lighting"],
-      portrait: ["professional portrait photography", "studio lighting", "8k resolution"],
-    };
-    return styleMap[styleId] || [];
+  // Get style tokens based on styleId (统一使用 visual-styles 风格库)
+  const getStyleTokensLocal = (): string[] => {
+    return getStyleTokensFromLib(styleId);
   };
 
   // Get character reference images for a shot
@@ -129,7 +120,7 @@ export function ShotList({ projectId, shots, styleId }: ShotListProps) {
           baseUrl,
           model,
           aspectRatio: '16:9',
-          styleTokens: getStyleTokens(),
+          styleTokens: getStyleTokensLocal(),
           referenceImages,
         },
         (progress) => {
@@ -153,7 +144,7 @@ export function ShotList({ projectId, shots, styleId }: ShotListProps) {
     } finally {
       setGeneratingShotId(null);
     }
-  }, [projectId, updateShot, getApiKey, checkVideoGenerationKeys, getCharacterReferenceImages, getStyleTokens]);
+  }, [projectId, updateShot, getCharacterReferenceImages, getStyleTokensLocal]);
 
   // Handle single shot video generation
   const handleGenerateVideo = useCallback(async (shot: Shot) => {
@@ -211,7 +202,7 @@ export function ShotList({ projectId, shots, styleId }: ShotListProps) {
     } finally {
       setGeneratingShotId(null);
     }
-  }, [projectId, updateShot, getApiKey, checkVideoGenerationKeys, getCharacterReferenceImages]);
+  }, [projectId, updateShot, getCharacterReferenceImages]);
 
   // Handle batch image generation
   const handleBatchGenerateImages = useCallback(async () => {
@@ -249,7 +240,7 @@ export function ShotList({ projectId, shots, styleId }: ShotListProps) {
         baseUrl,
         model,
         aspectRatio: '16:9',
-        styleTokens: getStyleTokens(),
+      styleTokens: getStyleTokensLocal(),
       },
       (shotId, progress) => {
         updateShot(projectId, shotId, { imageStatus: 'generating', imageProgress: progress });
@@ -284,7 +275,7 @@ export function ShotList({ projectId, shots, styleId }: ShotListProps) {
     setIsGenerating(false);
     setBatchProgress(projectId, null);
     toast.success(`批量生成完成: ${completed}/${pendingShots.length}`);
-  }, [shots, projectId, updateShot, setBatchProgress, getApiKey, checkVideoGenerationKeys, getStyleTokens]);
+  }, [shots, projectId, updateShot, setBatchProgress, getStyleTokensLocal]);
 
   // Handle character variation change
   const handleVariationChange = (shotId: string, characterId: string, variationId: string | null) => {

@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { createSplitStorage } from '@/lib/project-storage';
 import { saveImageToLocal, isElectron } from '@/lib/image-storage';
+import { useProjectStore } from '@/stores/project-store';
 
 // ==================== Types ====================
 
@@ -62,6 +63,13 @@ export interface Scene {
 
 export type SceneGenerationStatus = 'idle' | 'generating' | 'completed' | 'error';
 
+export interface SceneGenerationPrefs {
+  generationMode: 'single' | 'contact-sheet' | 'orthographic';
+  contactSheetLayout: '2x2' | '3x3';
+  contactSheetAspectRatio: '16:9' | '9:16';
+  orthographicAspectRatio: '16:9' | '9:16';
+}
+
 interface SceneState {
   scenes: Scene[];
   folders: SceneFolder[];
@@ -70,6 +78,10 @@ interface SceneState {
   generationStatus: SceneGenerationStatus;
   generationError: string | null;
   generatingSceneId: string | null;
+  generationPrefs: SceneGenerationPrefs;
+  generationPrefsByProject: Record<string, SceneGenerationPrefs>;
+  // 联合图自动生成任务跟踪 (parentSceneId → 状态)
+  contactSheetTasks: Record<string, { status: 'generating' | 'splitting' | 'saving' | 'done' | 'error'; progress: number; message?: string }>;
 }
 
 interface SceneActions {
@@ -92,6 +104,9 @@ interface SceneActions {
   // Generation status
   setGenerationStatus: (status: SceneGenerationStatus, error?: string) => void;
   setGeneratingScene: (id: string | null) => void;
+  setGenerationPrefs: (prefs: Partial<SceneGenerationPrefs>) => void;
+  // 联合图任务管理
+  setContactSheetTask: (parentSceneId: string, task: { status: 'generating' | 'splitting' | 'saving' | 'done' | 'error'; progress: number; message?: string } | null) => void;
   
   // Project scoping helpers
   assignProjectToUnscoped: (projectId: string) => void;
@@ -106,6 +121,20 @@ type SceneStore = SceneState & SceneActions;
 
 // ==================== Initial State ====================
 
+const defaultGenerationPrefs: SceneGenerationPrefs = {
+  generationMode: 'single',
+  contactSheetLayout: '3x3',
+  contactSheetAspectRatio: '16:9',
+  orthographicAspectRatio: '16:9',
+};
+
+const normalizeGenerationPrefs = (
+  prefs?: Partial<SceneGenerationPrefs> | null
+): SceneGenerationPrefs => ({
+  ...defaultGenerationPrefs,
+  ...(prefs || {}),
+});
+
 const initialState: SceneState = {
   scenes: [],
   folders: [],
@@ -114,21 +143,40 @@ const initialState: SceneState = {
   generationStatus: 'idle',
   generationError: null,
   generatingSceneId: null,
+  generationPrefs: { ...defaultGenerationPrefs },
+  generationPrefsByProject: {},
+  contactSheetTasks: {},
 };
 
 // ==================== Split/Merge for per-project storage ====================
 
-type ScenePersistedState = { scenes: Scene[]; folders: SceneFolder[] };
+type ScenePersistedState = {
+  scenes: Scene[];
+  folders: SceneFolder[];
+  generationPrefs?: SceneGenerationPrefs;
+  generationPrefsByProject?: Record<string, SceneGenerationPrefs>;
+};
 
 function splitSceneData(state: ScenePersistedState, pid: string) {
+  const normalizedMap = Object.fromEntries(
+    Object.entries(state.generationPrefsByProject || {}).map(([projectId, prefs]) => [
+      projectId,
+      normalizeGenerationPrefs(prefs),
+    ])
+  );
+  const projectGenerationPrefs = normalizeGenerationPrefs(normalizedMap[pid]);
+
   return {
     projectData: {
       scenes: state.scenes.filter((s) => s.projectId === pid),
       folders: state.folders.filter((f) => f.projectId === pid),
+      generationPrefs: projectGenerationPrefs,
     },
     sharedData: {
       scenes: state.scenes.filter((s) => !s.projectId),
       folders: state.folders.filter((f) => !f.projectId),
+      generationPrefs: normalizeGenerationPrefs(state.generationPrefs),
+      generationPrefsByProject: normalizedMap,
     },
   };
 }
@@ -137,6 +185,19 @@ function mergeSceneData(
   projectData: ScenePersistedState | null,
   sharedData: ScenePersistedState | null,
 ): ScenePersistedState {
+  const mergedPrefsByProject: Record<string, SceneGenerationPrefs> = {};
+
+  for (const [projectId, prefs] of Object.entries(sharedData?.generationPrefsByProject || {})) {
+    mergedPrefsByProject[projectId] = normalizeGenerationPrefs(prefs);
+  }
+
+  const inferredProjectId =
+    projectData?.scenes.find((s) => !!s.projectId)?.projectId ||
+    projectData?.folders.find((f) => !!f.projectId)?.projectId;
+  if (inferredProjectId && projectData?.generationPrefs) {
+    mergedPrefsByProject[inferredProjectId] = normalizeGenerationPrefs(projectData.generationPrefs);
+  }
+
   return {
     scenes: [
       ...(sharedData?.scenes ?? []),
@@ -146,6 +207,10 @@ function mergeSceneData(
       ...(sharedData?.folders ?? []),
       ...(projectData?.folders ?? []),
     ],
+    generationPrefs: normalizeGenerationPrefs(
+      projectData?.generationPrefs || sharedData?.generationPrefs
+    ),
+    generationPrefsByProject: mergedPrefsByProject,
   };
 }
 
@@ -267,7 +332,53 @@ export const useSceneStore = create<SceneStore>()(
       setGeneratingScene: (id) => {
         set({ generatingSceneId: id });
       },
-      
+
+      setContactSheetTask: (parentSceneId, task) => {
+        set((state) => {
+          const next = { ...state.contactSheetTasks };
+          if (task === null) {
+            delete next[parentSceneId];
+          } else {
+            next[parentSceneId] = task;
+          }
+          return { contactSheetTasks: next };
+        });
+      },
+
+      setGenerationPrefs: (prefs) => {
+        const activeProjectId = useProjectStore.getState().activeProjectId;
+        set((state) => {
+          const nextPrefs: SceneGenerationPrefs = {
+            ...state.generationPrefs,
+            ...prefs,
+          };
+          const projectPrefsUnchanged = activeProjectId
+            ? (() => {
+                const currentProjectPrefs = state.generationPrefsByProject[activeProjectId];
+                if (!currentProjectPrefs) return false;
+                return (
+                  currentProjectPrefs.generationMode === nextPrefs.generationMode &&
+                  currentProjectPrefs.contactSheetLayout === nextPrefs.contactSheetLayout &&
+                  currentProjectPrefs.contactSheetAspectRatio === nextPrefs.contactSheetAspectRatio &&
+                  currentProjectPrefs.orthographicAspectRatio === nextPrefs.orthographicAspectRatio
+                );
+              })()
+            : true;
+          const nextPrefsByProject = { ...state.generationPrefsByProject };
+          if (activeProjectId) {
+            nextPrefsByProject[activeProjectId] = nextPrefs;
+          }
+          const unchanged =
+            nextPrefs.generationMode === state.generationPrefs.generationMode &&
+            nextPrefs.contactSheetLayout === state.generationPrefs.contactSheetLayout &&
+            nextPrefs.contactSheetAspectRatio === state.generationPrefs.contactSheetAspectRatio &&
+            nextPrefs.orthographicAspectRatio === state.generationPrefs.orthographicAspectRatio &&
+            projectPrefsUnchanged;
+          if (unchanged) return state;
+          return { generationPrefs: nextPrefs, generationPrefsByProject: nextPrefsByProject };
+        });
+      },
+       
       // Assign missing projectId to current project (for isolation toggle)
       assignProjectToUnscoped: (projectId) => {
         set((state) => ({
@@ -313,13 +424,32 @@ export const useSceneStore = create<SceneStore>()(
           viewpointImages: undefined,
         })),
         folders: state.folders,
+        generationPrefs: state.generationPrefs,
+        generationPrefsByProject: state.generationPrefsByProject,
       }),
       merge: (persisted: any, current: any) => {
         if (!persisted) return current;
+        const activeProjectId = useProjectStore.getState().activeProjectId;
+        const mergedPrefsByProject: Record<string, SceneGenerationPrefs> = {
+          ...(current.generationPrefsByProject || {}),
+        };
+        for (const [projectId, prefs] of Object.entries(persisted.generationPrefsByProject || {})) {
+          mergedPrefsByProject[projectId] = normalizeGenerationPrefs(prefs as Partial<SceneGenerationPrefs>);
+        }
+        const mergedPrefs = normalizeGenerationPrefs(
+          persisted.generationPrefs || current.generationPrefs
+        );
+        if (activeProjectId) {
+          mergedPrefsByProject[activeProjectId] = normalizeGenerationPrefs(
+            mergedPrefsByProject[activeProjectId] || mergedPrefs
+          );
+        }
         return {
           ...current,
           scenes: persisted.scenes ?? current.scenes,
           folders: persisted.folders ?? current.folders,
+          generationPrefs: mergedPrefs,
+          generationPrefsByProject: mergedPrefsByProject,
         };
       },
       // Migration: convert base64 contactSheetImage to local-image:// on rehydration

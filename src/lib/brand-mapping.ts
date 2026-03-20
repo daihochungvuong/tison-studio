@@ -54,12 +54,14 @@ const BRAND_PATTERNS: Array<{ pattern: RegExp; brand: string }> = [
   // OpenAI 系列
   { pattern: /^(gpt-|o[1-9]|dall-e|dalle|chatgpt|sora|codex)/i,       brand: 'openai' },
   { pattern: /^gpt[-_]?image/i,                                         brand: 'openai' },
+  { pattern: /^(text-(embedding|babbage|curie|davinci|search)|davinci-|tts-|whisper)/i, brand: 'openai' },
 
   // Anthropic / Claude
   { pattern: /^claude/i,                                                 brand: 'anthropic' },
 
-  // Google / Gemini
+  // Google / Gemini / Imagen
   { pattern: /^(gemini|gemma|veo|palm|bard)/i,                          brand: 'google' },
+  { pattern: /^google\//i,                                               brand: 'google' },
 
   // DeepSeek
   { pattern: /^deepseek/i,                                               brand: 'deepseek' },
@@ -76,25 +78,25 @@ const BRAND_PATTERNS: Array<{ pattern: RegExp; brand: string }> = [
   { pattern: /^kling/i,                                                   brand: 'kling' },
 
   // Midjourney
-  { pattern: /^(mj_|midjourney)/i,                                        brand: 'midjourney' },
+  { pattern: /^(mj_|midjourney|niji)/i,                                     brand: 'midjourney' },
 
-  // Flux (Black Forest Labs)
-  { pattern: /^(flux[-_]|black-forest)/i,                                 brand: 'flux' },
+  // Flux (Black Forest Labs) — 含 flux.1.x 命名变体
+  { pattern: /^(flux[-_.]|black-forest)/i,                                 brand: 'flux' },
 
   // Grok (xAI)
   { pattern: /^grok/i,                                                    brand: 'grok' },
 
-  // 阿里巴巴 / Qwen / 通义
-  { pattern: /^(qwen|wan|tongyi|alibaba|bailian)/i,                      brand: 'alibaba' },
+  // 阿里巴巴 / Qwen / 通义 / QVQ / QWQ
+  { pattern: /^(qwen|wan|tongyi|alibaba|bailian|qvq|qwq)/i,           brand: 'alibaba' },
 
   // Moonshot / Kimi
   { pattern: /^(moonshot|kimi)/i,                                         brand: 'moonshot' },
 
-  // MiniMax
-  { pattern: /^(minimax|MiniMax|hailuo)/i,                                brand: 'minimax' },
+  // MiniMax / 海螺 / speech / audio / mimo
+  { pattern: /^(minimax|MiniMax|hailuo|speech-|audio[0-9]|mimo)/i,       brand: 'minimax' },
 
-  // Ollama / Llama
-  { pattern: /^(ollama|llama)/i,                                          brand: 'ollama' },
+  // Ollama / Llama / Meta
+  { pattern: /^(ollama|llama|meta-llama)/i,                                brand: 'ollama' },
 
   // Mistral
   { pattern: /^(mistral|mixtral|dolphin)/i,                               brand: 'mistral' },
@@ -105,11 +107,11 @@ const BRAND_PATTERNS: Array<{ pattern: RegExp; brand: string }> = [
   // Vidu (生数科技)
   { pattern: /^vidu/i,                                                     brand: 'vidu' },
 
-  // Replicate
-  { pattern: /^(replicate|andreasjansson|stability-ai)/i,                 brand: 'replicate' },
+  // Replicate (含 org/model 命名格式)
+  { pattern: /^(replicate|andreasjansson|stability-ai|cjwbw|lucataco|recraft-ai|riffusion|sujaykhandekar|prunaai)/i, brand: 'replicate' },
 
-  // 百度文心 ERNIE
-  { pattern: /^(ernie|wenxin)/i,                                           brand: 'wenxin' },
+  // 百度文心 ERNIE / Embedding-V1
+  { pattern: /^(ernie|wenxin|Embedding-V)/i,                              brand: 'wenxin' },
 
   // 硅基流动 SiliconCloud
   { pattern: /^(silicon|BAAI|Pro\/BAAI)/i,                                 brand: 'siliconcloud' },

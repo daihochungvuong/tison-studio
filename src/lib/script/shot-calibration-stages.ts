@@ -18,6 +18,8 @@ import { processBatched } from '@/lib/ai/batch-processor';
 import { getStyleDescription, getMediaType } from '@/lib/constants/visual-styles';
 import { buildCinematographyGuidance } from '@/lib/constants/cinematography-profiles';
 import { getMediaTypeGuidance } from '@/lib/generation/media-type-tokens';
+import { useScriptStore } from '@/stores/script-store';
+import { buildSeriesContextSummary } from './series-meta-sync';
 
 export interface ShotInputData {
   shotId: string;
@@ -53,6 +55,8 @@ export interface GlobalContext {
   episodeSeason?: string;
   totalEpisodes?: number;
   currentEpisode?: number;
+  /** 剧级上下文摘要（由 buildSeriesContextSummary 生成） */
+  seriesContextSummary?: string;
 }
 
 export interface CalibrationOptions {
@@ -88,8 +92,12 @@ export async function calibrateShotsMultiStage(
     episodeSeason || '',
   ].filter(Boolean).join(' | ');
 
+  // 剧级上下文摘要：来自 SeriesMeta
+  const seriesCtx = globalContext.seriesContextSummary || '';
+
   // 叙事锚点：故事核心 + 世界观 + 核心冲突（截断避免过长）
   const narrativeAnchorParts = [
+    seriesCtx ? `【剧级知识】\n${seriesCtx}` : '',
     outline ? `【故事核心】\n${outline.slice(0, 600)}` : '',
     worldSetting ? `【世界观/规则】\n${worldSetting.slice(0, 400)}` : '',
     themes?.length ? `【核心主题】${themes.join('、')}` : '',

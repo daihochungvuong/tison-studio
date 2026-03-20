@@ -280,21 +280,39 @@ export function createSplitStorage<T = any>(
       try {
         const parsed = JSON.parse(value);
         const state = parsed.state ?? parsed;
-        
-        const { projectData, sharedData } = splitFn(state as T, pid);
+        const version = parsed.version ?? 0;
 
-        const projectKey = `_p/${pid}/${storeName}`;
+        // Collect ALL unique projectIds from the state.
+        // When sharing is ON, the store may contain items from other projects
+        // that were modified (e.g. adding a variation to a character from another project).
+        // We must write each project's data back to its own file.
+        const allPids = new Set<string>([pid]);
+        for (const val of Object.values(state as Record<string, unknown>)) {
+          if (Array.isArray(val)) {
+            for (const item of val) {
+              if (item && typeof item === 'object' && 'projectId' in item &&
+                  typeof (item as any).projectId === 'string') {
+                allPids.add((item as any).projectId);
+              }
+            }
+          }
+        }
+
+        // Write each project's data to its respective file
+        for (const projectId of allPids) {
+          const { projectData } = splitFn(state as T, projectId);
+          const key = `_p/${projectId}/${storeName}`;
+          const payload = JSON.stringify({ state: projectData, version });
+          await fileStorage.setItem(key, payload);
+        }
+
+        // Write shared data (items without projectId)
+        const { sharedData } = splitFn(state as T, pid);
         const sharedKey = `_shared/${storeName}`;
-
-        // Save project-specific data
-        const projectPayload = JSON.stringify({ state: projectData, version: parsed.version ?? 0 });
-        await fileStorage.setItem(projectKey, projectPayload);
-        
-        // Save shared data
-        const sharedPayload = JSON.stringify({ state: sharedData, version: parsed.version ?? 0 });
+        const sharedPayload = JSON.stringify({ state: sharedData, version });
         await fileStorage.setItem(sharedKey, sharedPayload);
         
-        console.log(`[SplitStorage] Saved ${storeName} split: project(${Math.round(projectPayload.length / 1024)}KB) + shared(${Math.round(sharedPayload.length / 1024)}KB)`);
+        console.log(`[SplitStorage] Saved ${storeName} to ${allPids.size} project(s) + shared`);
       } catch (error) {
         console.error(`[SplitStorage] Failed to split ${storeName}, saving to legacy:`, error);
         await fileStorage.setItem(name, value);

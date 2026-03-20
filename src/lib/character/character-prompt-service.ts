@@ -149,10 +149,19 @@ function buildCharacterContext(project: any, character: any): {
     );
     
     if (epShots.length > 0) {
+      const sceneIds: string[] = Array.from(
+        new Set<string>(
+          epShots
+            .map((s: any) => s.sceneRefId)
+            .filter((id: unknown): id is string | number => id !== null && id !== undefined)
+            .map((id): string => String(id))
+        )
+      );
+
       characterAppearances.push({
         episodeIndex: ep.episodeIndex,
         episodeTitle: ep.title,
-        scenes: [...new Set(epShots.map((s: any) => s.sceneRefId).filter(Boolean))],
+        scenes: sceneIds,
         actions: epShots.map((s: any) => s.actionSummary).filter(Boolean).slice(0, 5),
         dialogues: epShots.map((s: any) => s.dialogue).filter(Boolean).slice(0, 5),
       });

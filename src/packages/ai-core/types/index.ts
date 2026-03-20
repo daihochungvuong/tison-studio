@@ -21,8 +21,13 @@ export interface AIScreenplay {
   orientation: 'landscape' | 'portrait';
   characters: AICharacter[];
   scenes: AIScene[];
+  characterBible?: CharacterBibleLike;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface CharacterBibleLike {
+  characters?: AICharacter[];
 }
 
 /**
@@ -132,6 +137,7 @@ export interface GenerationConfig {
 
   // Generation
   concurrency: number;        // How many scenes to generate in parallel
+  duration?: number;
   
   // Provider selection
   imageProvider: 'memefast' | 'mock';

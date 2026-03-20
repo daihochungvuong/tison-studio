@@ -85,8 +85,8 @@ function sceneHasTextDescription(scene: ScenePromptRequest['scenes'][0]): boolea
   const hasDialogue = !!(scene.dialogue && scene.dialogue.trim().length > 0);
   const hasSceneDesc = !!(scene.sceneDescription && scene.sceneDescription.trim().length > 5);
   
-  // Consider having description if actionSummary or sceneDescription exists
-  return hasAction || hasSceneDesc;
+  // Treat any meaningful script text as valid context for prompt generation.
+  return hasAction || hasSceneDesc || hasCamera || hasDialogue;
 }
 
 /**
@@ -436,7 +436,7 @@ Return a RAW JSON array (no markdown code block). BILINGUAL output required.
       }
     ];
 
-    const endpoint = buildEndpoint(normalizedBaseUrl, 'chat/completions');
+    const endpoint = buildEndpoint(baseUrl, 'chat/completions');
     console.log('[ScenePromptGenerator] Calling chat completion:', { model, hasImage: true, endpoint });
 
     const response = await fetch(endpoint, {

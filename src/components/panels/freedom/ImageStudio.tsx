@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from 'react';
-import { ImageIcon, Loader2, Download, Save, Sparkles } from 'lucide-react';
+import { ImageIcon, Loader2, Download, Save, Sparkles, Archive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { useFreedomStore } from '@/stores/freedom-store';
 import { ModelSelector } from './ModelSelector';
 import { GenerationHistory } from './GenerationHistory';
+import { SaveToPropsDialog } from './SaveToPropsDialog';
 import { generateFreedomImage } from '@/lib/freedom/freedom-api';
 import {
   getT2IModelById,
@@ -21,6 +22,8 @@ import {
 } from '@/lib/freedom/model-registry';
 
 export function ImageStudio() {
+  const [saveToPropsOpen, setSaveToPropsOpen] = useState(false);
+
   const {
     imagePrompt, setImagePrompt,
     selectedImageModel, setSelectedImageModel,
@@ -272,6 +275,9 @@ export function ImageStudio() {
               className="max-w-full max-h-[calc(100vh-200px)] rounded-lg shadow-lg object-contain"
             />
             <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+              <Button size="sm" variant="secondary" onClick={() => setSaveToPropsOpen(true)}>
+                <Archive className="h-4 w-4 mr-1" /> 保存到道具库
+              </Button>
               <Button size="sm" variant="secondary" asChild>
                 <a href={imageResult} download target="_blank" rel="noopener">
                   <Download className="h-4 w-4 mr-1" /> 下载
@@ -296,6 +302,16 @@ export function ImageStudio() {
           setImageResult(entry.resultUrl);
         }} />
       </div>
+
+      {/* 保存到道具库弹窗 */}
+      {imageResult && (
+        <SaveToPropsDialog
+          open={saveToPropsOpen}
+          onOpenChange={setSaveToPropsOpen}
+          imageUrl={imageResult}
+          prompt={imagePrompt}
+        />
+      )}
     </div>
   );
 }

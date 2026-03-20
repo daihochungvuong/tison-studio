@@ -50,6 +50,11 @@ function isHttpUrl(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
 }
 
+function extractFirstHttpUrl(value: string): string | undefined {
+  const match = value.match(/https?:\/\/[^\s"'<>]+/i);
+  return match?.[0];
+}
+
 function resolveUploadUrl(provider: ImageHostProvider): string {
   const uploadPath = (provider.uploadPath || '').trim();
   if (uploadPath && isHttpUrl(uploadPath)) {
@@ -62,10 +67,74 @@ function resolveUploadUrl(provider: ImageHostProvider): string {
   const normalizedPath = uploadPath.startsWith('/') ? uploadPath : `/${uploadPath}`;
   return `${baseUrl}${normalizedPath}`;
 }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
 
-function getByPath(obj: any, path?: string): any {
-  if (!obj || !path) return undefined;
-  return path.split('.').reduce((acc, key) => acc?.[key], obj);
+function getByPath(obj: unknown, path?: string): unknown {
+  if (!isRecord(obj) || !path) return undefined;
+  return path.split('.').reduce<unknown>((acc, key) => {
+    if (!isRecord(acc)) return undefined;
+    return acc[key];
+  }, obj);
+}
+
+function getExtensionFromMimeType(mimeType?: string): string {
+  switch ((mimeType || '').toLowerCase()) {
+    case 'image/jpeg':
+      return 'jpg';
+    case 'image/gif':
+      return 'gif';
+    case 'image/webp':
+      return 'webp';
+    case 'image/svg+xml':
+      return 'svg';
+    case 'image/bmp':
+      return 'bmp';
+    case 'image/avif':
+      return 'avif';
+    case 'image/png':
+    default:
+      return 'png';
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function base64ToBlob(base64Data: string, mimeType = 'image/png'): Blob {
+  const binary = atob(base64Data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function toUploadFile(imageData: string, name?: string): Promise<{ blob: Blob; filename: string }> {
+  let blob: Blob;
+
+  if (isHttpUrl(imageData)) {
+    const response = await fetch(imageData);
+    if (!response.ok) {
+      throw new Error(`下载图片失败: ${response.status}`);
+    }
+    blob = await response.blob();
+  } else if (imageData.startsWith('data:')) {
+    const commaIndex = imageData.indexOf(',');
+    const header = commaIndex >= 0 ? imageData.slice(0, commaIndex) : '';
+    const payload = commaIndex >= 0 ? imageData.slice(commaIndex + 1) : imageData;
+    const mimeType = header.match(/^data:([^;,]+)/)?.[1] || 'image/png';
+    blob = base64ToBlob(payload, mimeType);
+  } else {
+    blob = base64ToBlob(imageData, 'image/png');
+  }
+
+  const baseName = (name || 'upload').trim() || 'upload';
+  const hasExtension = /\.[a-z0-9]{2,8}$/i.test(baseName);
+  const filename = hasExtension ? baseName : `${baseName}.${getExtensionFromMimeType(blob.type)}`;
+  return { blob, filename };
 }
 
 async function toBase64Data(imageData: string): Promise<string> {
@@ -100,6 +169,14 @@ async function uploadWithProvider(
   options?: UploadOptions
 ): Promise<UploadResult> {
   try {
+    if (typeof window !== 'undefined' && window.imageHostUploader?.upload) {
+      return await window.imageHostUploader.upload({
+        provider,
+        apiKey,
+        imageData,
+        options,
+      });
+    }
     const uploadUrl = resolveUploadUrl(provider);
     if (!uploadUrl) {
       return { success: false, error: '图床上传地址未配置' };
@@ -107,35 +184,49 @@ async function uploadWithProvider(
 
     const fieldName = provider.imageField || 'image';
     const nameField = provider.nameField || 'name';
-    const base64Data = await toBase64Data(imageData);
+    const payloadType = provider.imagePayloadType || 'base64';
+    const staticFormFields = provider.staticFormFields || {};
 
     const formData = new FormData();
-    formData.append(fieldName, base64Data);
+    Object.entries(staticFormFields).forEach(([key, value]) => {
+      formData.append(key, value);
+    });
+    if (provider.apiKeyFormField && apiKey) {
+      formData.append(provider.apiKeyFormField, apiKey);
+    }
+    if (payloadType === 'file') {
+      const { blob, filename } = await toUploadFile(imageData, options?.name);
+      formData.append(fieldName, blob, filename);
+    } else {
+      const base64Data = await toBase64Data(imageData);
+      formData.append(fieldName, base64Data);
+    }
     if (options?.name) {
       formData.append(nameField, options.name);
     }
 
     const url = new URL(uploadUrl);
-    if (provider.apiKeyParam) {
+    if (provider.apiKeyParam && apiKey) {
       url.searchParams.set(provider.apiKeyParam, apiKey);
     }
     if (provider.expirationParam && options?.expiration) {
       url.searchParams.set(provider.expirationParam, String(options.expiration));
     }
-
-    const headers: Record<string, string> = {};
-    if (provider.apiKeyHeader) {
+    const headers: Record<string, string> = {
+      Accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
+    };
+    if (provider.apiKeyHeader && apiKey) {
       headers[provider.apiKeyHeader] = apiKey;
     }
 
     const response = await fetch(url.toString(), {
       method: 'POST',
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
+      headers,
       body: formData,
     });
 
     const text = await response.text();
-    let data: any = null;
+    let data: unknown = null;
     try {
       data = text ? JSON.parse(text) : null;
     } catch {
@@ -143,12 +234,20 @@ async function uploadWithProvider(
     }
 
     if (!response.ok) {
-      const message = data?.error?.message || data?.message || text || `上传失败: ${response.status}`;
-      return { success: false, error: message };
+      const errorMessage = getByPath(data, 'error.message');
+      const messageField = getByPath(data, 'message');
+      const message = typeof errorMessage === 'string'
+        ? errorMessage
+        : typeof messageField === 'string'
+          ? messageField
+          : text || `上传失败: ${response.status}`;
+      return { success: false, error: `图床 ${provider.name} 上传失败：${message}` };
     }
 
     const urlField = getByPath(data, provider.responseUrlField || 'url');
     const deleteField = getByPath(data, provider.responseDeleteUrlField || 'delete_url');
+    const trimmedText = text.trim();
+    const extractedTextUrl = extractFirstHttpUrl(trimmedText);
 
     if (urlField) {
       return {
@@ -157,10 +256,19 @@ async function uploadWithProvider(
         deleteUrl: deleteField ? (typeof deleteField === 'string' ? deleteField : String(deleteField)) : undefined,
       };
     }
+    if (extractedTextUrl) {
+      return { success: true, url: extractedTextUrl };
+    }
 
-    return { success: false, error: '上传成功但未返回 URL' };
+    console.warn('[ImageHost] Upload succeeded but no URL was detected in the response', {
+      provider: provider.name,
+      platform: provider.platform,
+      responsePreview: trimmedText.substring(0, 200),
+    });
+    return { success: false, error: `图床 ${provider.name} 上传成功但未返回 URL` };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : '上传失败' };
+    const message = error instanceof Error ? error.message : '上传失败';
+    return { success: false, error: `图床 ${provider.name} 请求失败：${message}` };
   }
 }
 
@@ -169,6 +277,19 @@ function getRotatedProviders(providers: ImageHostProvider[]): ImageHostProvider[
   const start = providerCursor % providers.length;
   providerCursor = (providerCursor + 1) % providers.length;
   return [...providers.slice(start), ...providers.slice(0, start)];
+}
+
+async function attemptProviderUpload(
+  provider: ImageHostProvider,
+  apiKey: string,
+  imageData: string,
+  options?: UploadOptions
+): Promise<UploadResult> {
+  try {
+    return await uploadWithProvider(provider, apiKey, imageData, options);
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : '上传失败' };
+  }
 }
 
 // ==================== Unified Upload API ====================
@@ -200,6 +321,19 @@ export async function uploadToImageHost(
   for (const provider of orderedProviders) {
     const keys = parseApiKeys(provider.apiKey);
     if (keys.length === 0) {
+      if (provider.apiKeyOptional) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const result = await attemptProviderUpload(provider, '', imageData, options);
+          if (result.success) {
+            return result;
+          }
+          lastError = result.error || '上传失败';
+          if (attempt < 1) {
+            await sleep(600);
+          }
+        }
+        continue;
+      }
       lastError = `图床 ${provider.name} 未配置 API Key`;
       continue;
     }
@@ -214,18 +348,26 @@ export async function uploadToImageHost(
         break;
       }
 
-      let result: UploadResult;
-      try {
-        result = await uploadWithProvider(provider, apiKey, imageData, options);
-      } catch (error) {
-        result = { success: false, error: error instanceof Error ? error.message : '上传失败' };
-      }
+      const result = await attemptProviderUpload(provider, apiKey, imageData, options);
       if (result.success) {
         return result;
       }
 
       lastError = result.error || '上传失败';
       keyManager.markCurrentKeyFailed();
+    }
+
+    if (provider.apiKeyOptional) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await attemptProviderUpload(provider, '', imageData, options);
+        if (result.success) {
+          return result;
+        }
+        lastError = result.error || lastError;
+        if (attempt < 1) {
+          await sleep(600);
+        }
+      }
     }
   }
 

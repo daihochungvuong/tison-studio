@@ -19,7 +19,7 @@ declare global {
   }
 }
 
-export type ImageCategory = 'characters' | 'scenes' | 'shots' | 'wardrobe' | 'videos';
+export type ImageCategory = 'characters' | 'scenes' | 'shots' | 'wardrobe' | 'videos' | 'styles' | 'props';
 
 /**
  * Check if running in Electron environment

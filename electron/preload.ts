@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('fileStorage', {
   removeItem: (key: string) => ipcRenderer.invoke('file-storage-remove', key),
   exists: (key: string) => ipcRenderer.invoke('file-storage-exists', key),
   listKeys: (prefix: string) => ipcRenderer.invoke('file-storage-list', prefix),
+  listDirs: (prefix: string) => ipcRenderer.invoke('file-storage-list-dirs', prefix),
   removeDir: (prefix: string) => ipcRenderer.invoke('file-storage-remove-dir', prefix),
 })
 // Storage manager API for paths, cache, import/export
@@ -76,5 +77,38 @@ contextBridge.exposeInMainWorld('storageManager', {
 contextBridge.exposeInMainWorld('electronAPI', {
   saveFileDialog: (options: { localPath: string, defaultPath: string, filters: { name: string, extensions: string[] }[] }) =>
     ipcRenderer.invoke('save-file-dialog', options),
+})
+
+contextBridge.exposeInMainWorld('appUpdater', {
+  getCurrentVersion: () => ipcRenderer.invoke('app-updater-get-current-version'),
+  checkForUpdates: () => ipcRenderer.invoke('app-updater-check'),
+  openExternalLink: (url: string) => ipcRenderer.invoke('app-updater-open-link', url),
+})
+
+contextBridge.exposeInMainWorld('imageHostUploader', {
+  upload: (payload: {
+    provider: {
+      name: string
+      platform: string
+      baseUrl?: string
+      uploadPath?: string
+      apiKeyParam?: string
+      apiKeyHeader?: string
+      apiKeyFormField?: string
+      expirationParam?: string
+      imageField?: string
+      imagePayloadType?: 'base64' | 'file'
+      nameField?: string
+      staticFormFields?: Record<string, string>
+      responseUrlField?: string
+      responseDeleteUrlField?: string
+    }
+    apiKey: string
+    imageData: string
+    options?: {
+      name?: string
+      expiration?: number
+    }
+  }) => ipcRenderer.invoke('image-host-upload', payload),
 })
 

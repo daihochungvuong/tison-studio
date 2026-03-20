@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { WardrobeModal } from "./wardrobe-modal";
 import { LocalImage } from "@/components/ui/local-image";
+import { ImagePreviewModal } from "@/components/panels/director/media-preview-modal";
 
 // View type labels
 const VIEW_LABELS: Record<string, string> = {
@@ -74,6 +75,7 @@ export function CharacterDetail({ character }: CharacterDetailProps) {
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [editNotes, setEditNotes] = useState("");
   const [newTag, setNewTag] = useState("");
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   if (!character) {
     return (
@@ -209,12 +211,17 @@ export function CharacterDetail({ character }: CharacterDetailProps) {
       </div>
 
       <ScrollArea className="flex-1">
-        <div className="p-3 space-y-4">
+        <div className="p-3 space-y-4 pb-32">
           {/* Main preview */}
           <div className="space-y-2">
             <div 
-              className="aspect-square rounded-lg bg-muted overflow-hidden border relative"
+              className="aspect-square rounded-lg bg-muted overflow-hidden border relative cursor-zoom-in"
+              title="双击查看完整图片"
               draggable
+              onDoubleClick={() => {
+                const url = currentView?.imageUrl || character.thumbnailUrl;
+                if (url) setPreviewImageUrl(url);
+              }}
               onDragStart={(e) => {
                 e.dataTransfer.setData("application/json", JSON.stringify({
                   type: "character",
@@ -230,13 +237,13 @@ export function CharacterDetail({ character }: CharacterDetailProps) {
                 <LocalImage 
                   src={currentView.imageUrl} 
                   alt={`${character.name} - ${VIEW_LABELS[currentView.viewType] || currentView.viewType}`}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               ) : character.thumbnailUrl ? (
                 <LocalImage 
                   src={character.thumbnailUrl} 
                   alt={character.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
@@ -467,6 +474,13 @@ export function CharacterDetail({ character }: CharacterDetailProps) {
         character={character}
         open={showWardrobe}
         onOpenChange={setShowWardrobe}
+      />
+
+      {/* Image Preview Lightbox */}
+      <ImagePreviewModal
+        imageUrl={previewImageUrl || ''}
+        isOpen={!!previewImageUrl}
+        onClose={() => setPreviewImageUrl(null)}
       />
     </div>
   );

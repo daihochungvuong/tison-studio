@@ -90,13 +90,13 @@ export async function submitAngleSwitchTask(
           if (errorText && errorText.length < 200) errorMessage = errorText;
         }
 
-        if (response.status === 401 || response.status === 403) {
-          throw new Error('API Key 无效或已过期');
-        } else if (response.status >= 500) {
-          throw new Error('RunningHub 服务暂时不可用');
-        }
-
-        const error = new Error(errorMessage) as Error & { status?: number };
+        const error = new Error(
+          response.status === 401 || response.status === 403
+            ? 'API Key 无效或已过期'
+            : response.status >= 500
+              ? 'RunningHub 服务暂时不可用'
+              : errorMessage
+        ) as Error & { status?: number };
         error.status = response.status;
         throw error;
       }

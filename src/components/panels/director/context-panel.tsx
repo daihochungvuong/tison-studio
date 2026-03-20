@@ -8,7 +8,7 @@
  * 全局右栏 - AI导演模式：显示剧本层级树，让用户选择要生成的内容
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useMediaPanelStore } from "@/stores/media-panel-store";
 import { useActiveScriptProject } from "@/stores/script-store";
 import { getShotCompletionStatus, calculateProgress, SHOT_SIZE_MAP } from "@/lib/script/shot-utils";
@@ -29,6 +29,7 @@ import {
   Plus,
 } from "lucide-react";
 import type { Shot, CompletionStatus, ScriptScene } from "@/types/script";
+import { DEFAULT_STYLE_ID, getStyleById } from "@/lib/constants/visual-styles";
 import { useDirectorStore, useActiveDirectorProject, type SoundEffectTag } from '@/stores/director-store';
 import { useCharacterLibraryStore } from '@/stores/character-library-store';
 import { useSceneStore } from '@/stores/scene-store';
@@ -53,7 +54,7 @@ function StatusIcon({ status }: { status?: CompletionStatus }) {
 export function DirectorContextPanel() {
   const { setActiveTab, goToDirectorWithData } = useMediaPanelStore();
   const scriptProject = useActiveScriptProject();
-  const { addScenesFromScript } = useDirectorStore();
+  const { addScenesFromScript, setStoryboardConfig } = useDirectorStore();
   const { resourceSharing } = useAppSettingsStore();
   const { activeProjectId } = useProjectStore();
   
@@ -77,7 +78,21 @@ export function DirectorContextPanel() {
 
   const scriptData = scriptProject?.scriptData || null;
   const shots = scriptProject?.shots || [];
-  const styleId = scriptProject?.styleId || "ghibli";
+  const styleId = scriptProject?.styleId || DEFAULT_STYLE_ID;
+
+  // 从剧本添加分镜时，同步剧本风格到导演面板的 storyboardConfig
+  const addScenesAndSyncStyle: typeof addScenesFromScript = useCallback((scenes) => {
+    addScenesFromScript(scenes);
+    // 如果导演面板尚未设置 visualStyleId，从剧本项目继承
+    const directorStyleId = projectData?.storyboardConfig?.visualStyleId;
+    if (!directorStyleId && scriptProject?.styleId) {
+      const style = getStyleById(scriptProject.styleId);
+      if (style) {
+        setStoryboardConfig({ visualStyleId: style.id, styleTokens: [style.prompt] });
+        console.log('[ContextPanel] Synced script styleId to director:', style.id);
+      }
+    }
+  }, [addScenesFromScript, setStoryboardConfig, projectData?.storyboardConfig?.visualStyleId, scriptProject?.styleId]);
 
   // 如果没有episodes，创建一个默认的
   const episodes = useMemo(() => {
@@ -147,11 +162,15 @@ export function DirectorContextPanel() {
         const scriptChar = scriptData.characters.find(c => c.id === scriptCharId);
         if (!scriptChar) continue;
         
-        // 优先使用已关联的角色库ID
+        // 优先使用已关联的角色库ID（需校验该ID在当前可见角色库中仍有效）
         if (scriptChar.characterLibraryId && !addedIds.has(scriptChar.characterLibraryId)) {
-          libraryIds.push(scriptChar.characterLibraryId);
-          addedIds.add(scriptChar.characterLibraryId);
-          continue;
+          const linkedLibraryChar = libraryCharacters.find(c => c.id === scriptChar.characterLibraryId);
+          if (linkedLibraryChar) {
+            libraryIds.push(linkedLibraryChar.id);
+            addedIds.add(linkedLibraryChar.id);
+            continue;
+          }
+          console.warn(`[ContextPanel] Invalid characterLibraryId "${scriptChar.characterLibraryId}" for script character "${scriptChar.name}", fallback to name matching`);
         }
         
         // 否则通过名字匹配角色库中的角色
@@ -380,7 +399,7 @@ export function DirectorContextPanel() {
     // 自动匹配场景库中的场景和视角（优先使用已有的视角关联）
     const sceneMatch = findMatchingSceneAndViewpointQuick(shot, scene, shotIndexInScene >= 0 ? shotIndexInScene : undefined);
     
-    addScenesFromScript([{
+    addScenesAndSyncStyle([{
       // 场景信息
       sceneName: sceneMatch?.matchedSceneName || scene.name || '',
       sceneLocation: scene.location || '',
@@ -454,7 +473,50 @@ export function DirectorContextPanel() {
     const sceneShots = shotsByScene[scene.id] || [];
     
     if (sceneShots.length === 0) {
-      toast.error('该场景没有分镜');
+      const fallbackPromptZh = scene.visualPrompt?.trim()
+        || [scene.location, scene.atmosphere].filter(Boolean).join(' - ')
+        || scene.name
+        || '场景描述';
+      const fallbackPromptEn = scene.visualPromptEn?.trim() || '';
+      const matchedScene = sceneLibraryScenes.find((s) =>
+        !s.parentSceneId &&
+        !s.isViewpointVariant &&
+        (
+          (!!scene.name && (s.name.includes(scene.name) || scene.name.includes(s.name)))
+          || (!!scene.location && (s.name.includes(scene.location) || scene.location.includes(s.name)))
+        )
+      );
+
+      addScenesAndSyncStyle([{
+        sceneName: scene.name || scene.location || '未命名场景',
+        sceneLocation: scene.location || '',
+        promptZh: fallbackPromptZh,
+        promptEn: fallbackPromptEn,
+        imagePrompt: fallbackPromptEn,
+        imagePromptZh: fallbackPromptZh,
+        videoPrompt: fallbackPromptEn,
+        videoPromptZh: fallbackPromptZh,
+        endFramePrompt: '',
+        endFramePromptZh: '',
+        needsEndFrame: false,
+        characterIds: [],
+        emotionTags: [],
+        shotSize: null,
+        duration: 5,
+        ambientSound: scene.atmosphere || '',
+        soundEffects: [] as SoundEffectTag[],
+        soundEffectText: '',
+        dialogue: '',
+        actionSummary: scene.atmosphere || '',
+        cameraMovement: '',
+        specialTechnique: '',
+        sceneLibraryId: matchedScene?.id,
+        viewpointId: undefined,
+        sceneReferenceImage: matchedScene?.referenceImage || matchedScene?.referenceImageBase64,
+      }]);
+
+      const matchInfo = matchedScene ? `（已匹配场景库：${matchedScene.name}）` : '';
+      toast.success(`该场景暂无分镜，已创建 1 条场景分镜${matchInfo}`);
       return;
     }
     
@@ -542,7 +604,7 @@ export function DirectorContextPanel() {
       };
     });
     
-    addScenesFromScript(scenesToAdd);
+    addScenesAndSyncStyle(scenesToAdd);
     const matchInfo = matchedCount > 0 ? ` (${matchedCount}个已匹配场景库)` : '';
     toast.success(`已添加 ${scenesToAdd.length} 个分镜到编辑列表${matchInfo}`);
   };

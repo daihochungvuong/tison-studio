@@ -105,10 +105,12 @@ export async function switchProject(newProjectId: string): Promise<void> {
   //    so the persist write triggered here will save the correct data (not empty defaults).
   useScriptStore.getState().setActiveProjectId(newProjectId);
   useDirectorStore.getState().setActiveProjectId(newProjectId);
+  useSClassStore.getState().setActiveProjectId(newProjectId);
 
   // 5. Ensure project data exists in stores that need it
   useScriptStore.getState().ensureProject(newProjectId);
   useDirectorStore.getState().ensureProject(newProjectId);
+  useSClassStore.getState().ensureProject(newProjectId);
 
   console.log(`[ProjectSwitcher] Switch complete → ${newProjectId.substring(0, 8)}`);
 }

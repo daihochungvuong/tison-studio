@@ -18,6 +18,8 @@ import {
 } from "@/stores/scene-store";
 import { useAppSettingsStore } from "@/stores/app-settings-store";
 import { useProjectStore } from "@/stores/project-store";
+import { useMediaPanelStore } from "@/stores/media-panel-store";
+import { useActiveScriptProject } from "@/stores/script-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -42,6 +44,7 @@ import {
   FolderPlus,
   Folder,
   ChevronRight,
+  ChevronDown,
   Home,
   Pencil,
   Trash2,
@@ -52,10 +55,13 @@ import {
   Grid2X2,
   List,
   Search,
+  Loader2,
+  Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useResolvedImageUrl } from "@/hooks/use-resolved-image-url";
+import { ImagePreviewModal } from "@/components/panels/director/media-preview-modal";
 
 type ViewMode = "grid" | "list";
 
@@ -77,9 +83,19 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
     moveToFolder,
     getFolderById,
     selectScene,
+    contactSheetTasks,
   } = useSceneStore();
   const { resourceSharing } = useAppSettingsStore();
   const { activeProjectId } = useProjectStore();
+  const { activeEpisodeIndex } = useMediaPanelStore();
+  const scriptProject = useActiveScriptProject();
+
+  // 集作用域过滤
+  const hasEpisodeScope = activeEpisodeIndex != null;
+  const activeEpisodeId = hasEpisodeScope
+    ? scriptProject?.scriptData?.episodes.find(ep => ep.index === activeEpisodeIndex)?.id
+    : undefined;
+  const [episodeViewScope, setEpisodeViewScope] = useState<'all' | 'episode'>('episode');
 
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [searchQuery, setSearchQuery] = useState("");
@@ -87,6 +103,7 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
   const [newFolderName, setNewFolderName] = useState("");
   const [renamingFolder, setRenamingFolder] = useState<SceneFolder | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const visibleFolders = useMemo(() => {
     if (resourceSharing.shareScenes) return folders;
@@ -95,10 +112,20 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
   }, [folders, resourceSharing.shareScenes, activeProjectId]);
 
   const visibleScenes = useMemo(() => {
-    if (resourceSharing.shareScenes) return scenes;
-    if (!activeProjectId) return [];
-    return scenes.filter((s) => s.projectId === activeProjectId);
-  }, [scenes, resourceSharing.shareScenes, activeProjectId]);
+    let items: Scene[];
+    if (resourceSharing.shareScenes) {
+      items = scenes;
+    } else if (!activeProjectId) {
+      items = [];
+    } else {
+      items = scenes.filter((s) => s.projectId === activeProjectId);
+    }
+    // 本集过滤：只显示本集关联的场景 + 无集绑定的全局场景
+    if (hasEpisodeScope && episodeViewScope === 'episode' && activeEpisodeId) {
+      items = items.filter(s => !s.linkedEpisodeId || s.linkedEpisodeId === activeEpisodeId);
+    }
+    return items;
+  }, [scenes, resourceSharing.shareScenes, activeProjectId, hasEpisodeScope, episodeViewScope, activeEpisodeId]);
 
   // Current folder's subfolders
   const subFolders = useMemo(() => 
@@ -145,6 +172,23 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
   
   // 展开/收起状态
   const [expandedScenes, setExpandedScenes] = useState<Set<string>>(new Set());
+  
+  // 联合图任务完成后自动展开父场景（让用户看到切割后的子场景）
+  useEffect(() => {
+    if (!contactSheetTasks) return;
+    for (const [sceneId, task] of Object.entries(contactSheetTasks)) {
+      if (task && task.status === 'done' && !expandedScenes.has(sceneId)) {
+        const hasChildren = childScenesMap.has(sceneId);
+        if (hasChildren) {
+          setExpandedScenes(prev => {
+            const next = new Set(prev);
+            next.add(sceneId);
+            return next;
+          });
+        }
+      }
+    }
+  }, [contactSheetTasks, childScenesMap]);
   
   const toggleExpand = (sceneId: string) => {
     const newExpanded = new Set(expandedScenes);
@@ -289,6 +333,27 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
               className="h-8 pl-7 text-sm"
             />
           </div>
+          {/* 全剧/本集切换（仅在进入某集时显示）*/}
+          {hasEpisodeScope && (
+            <div className="flex border rounded-md">
+              <Button
+                variant={episodeViewScope === 'episode' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-8 px-2 rounded-r-none text-xs"
+                onClick={() => setEpisodeViewScope('episode')}
+              >
+                本集
+              </Button>
+              <Button
+                variant={episodeViewScope === 'all' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-8 px-2 rounded-l-none text-xs"
+                onClick={() => setEpisodeViewScope('all')}
+              >
+                全剧
+              </Button>
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -320,7 +385,7 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1 p-3">
+      <ScrollArea className="flex-1 p-3 pb-32">
         {/* Folders */}
         {subFolders.length > 0 && (
           <div className="mb-4">
@@ -402,6 +467,8 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
                       isExpanded={isExpanded}
                       hasChildren={hasChildren}
                       onToggleExpand={() => toggleExpand(scene.id)}
+                      onImagePreview={(url) => setPreviewImageUrl(url)}
+                      generatingTask={contactSheetTasks[scene.id]}
                     />
                   </SceneContextMenu>
                 );
@@ -424,6 +491,15 @@ export function SceneGallery({ onSceneSelect, selectedSceneId }: SceneGalleryPro
           )
         )}
       </ScrollArea>
+
+      {/* Image preview lightbox */}
+      {previewImageUrl && (
+        <ImagePreviewModal
+          imageUrl={previewImageUrl}
+          isOpen={true}
+          onClose={() => setPreviewImageUrl(null)}
+        />
+      )}
 
       {/* New folder dialog */}
       <Dialog open={showNewFolderDialog} onOpenChange={setShowNewFolderDialog}>
@@ -483,6 +559,8 @@ function SceneCard({
   isExpanded = false,
   hasChildren = false,
   onToggleExpand,
+  onImagePreview,
+  generatingTask,
 }: {
   scene: Scene;
   isSelected: boolean;
@@ -493,6 +571,8 @@ function SceneCard({
   isExpanded?: boolean;   // 是否展开
   hasChildren?: boolean;  // 是否有子场景
   onToggleExpand?: () => void;
+  onImagePreview?: (url: string) => void;
+  generatingTask?: { status: string; progress: number; message?: string };
 }) {
   const timeLabel = TIME_PRESETS.find(t => t.id === scene.time)?.label || scene.time;
   const atmosphereLabel = ATMOSPHERE_PRESETS.find(a => a.id === scene.atmosphere)?.label || scene.atmosphere;
@@ -522,15 +602,49 @@ function SceneCard({
           }
         }}
       >
-        <div className="aspect-video rounded bg-muted flex items-center justify-center overflow-hidden mb-2 relative">
+        <div
+          className={cn(
+            "aspect-video rounded bg-muted flex items-center justify-center overflow-hidden mb-2 relative",
+            hasChildren ? "cursor-pointer" : "cursor-zoom-in"
+          )}
+          title={hasChildren ? (isExpanded ? "双击收起子场景" : "双击展开子场景") : "双击查看大图"}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            if (hasChildren) {
+              // 有子场景时，双击展开/收起而非打开预览
+              onToggleExpand?.();
+            } else {
+              if (resolvedImage) onImagePreview?.(resolvedImage);
+            }
+          }}
+        >
           {displayImage ? (
             <img 
               src={resolvedImage || ''} 
               alt={scene.name}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
             />
           ) : (
             <MapPin className="h-8 w-8 text-muted-foreground" />
+          )}
+          {/* 联合图生成中遮罩 */}
+          {generatingTask && generatingTask.status !== 'done' && (
+            <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-1 z-10">
+              {generatingTask.status === 'error' ? (
+                <span className="text-red-400 text-[10px]">❌ 失败</span>
+              ) : (
+                <>
+                  <Loader2 className="h-6 w-6 text-white animate-spin" />
+                  <span className="text-white text-[10px]">{generatingTask.message || '生成中...'}</span>
+                  <div className="w-3/4 h-1 bg-white/30 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-300"
+                      style={{ width: `${generatingTask.progress}%` }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           )}
           {/* 子场景标识 */}
           {depth > 0 && (
@@ -538,13 +652,38 @@ function SceneCard({
               {scene.viewpointName || '视角'}
             </div>
           )}
-          {/* 显示子场景数量 */}
+          {/* 显示子场景数量 + 展开/收起指示 */}
           {hasChildren && (
-            <div className={cn(
-              "absolute top-1 right-1 px-1.5 py-0.5 rounded text-white text-[8px]",
-              isExpanded ? "bg-primary" : "bg-green-500"
-            )}>
+            <div
+              className={cn(
+                "absolute top-1 right-1 px-1.5 py-0.5 rounded text-white text-[8px] flex items-center gap-0.5 cursor-pointer",
+                isExpanded ? "bg-primary" : "bg-green-500"
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleExpand?.();
+              }}
+              title={isExpanded ? "收起子场景" : "展开子场景"}
+            >
+              {isExpanded ? (
+                <ChevronDown className="h-2.5 w-2.5" />
+              ) : (
+                <ChevronRight className="h-2.5 w-2.5" />
+              )}
               {childCount} 个
+            </div>
+          )}
+          {/* 父场景预览按钮（有子场景时双击展开，预览通过此按钮） */}
+          {hasChildren && resolvedImage && (
+            <div
+              className="absolute bottom-1 right-1 bg-black/60 hover:bg-black/80 text-white rounded p-0.5 cursor-pointer transition-colors"
+              title="预览大图"
+              onClick={(e) => {
+                e.stopPropagation();
+                onImagePreview?.(resolvedImage);
+              }}
+            >
+              <Eye className="h-3 w-3" />
             </div>
           )}
         </div>
@@ -613,6 +752,12 @@ function SceneCard({
         ) : (
           <MapPin className="h-4 w-4 text-muted-foreground" />
         )}
+        {/* 列表视图生成中遮罩 */}
+        {generatingTask && generatingTask.status !== 'done' && generatingTask.status !== 'error' && (
+          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+            <Loader2 className="h-4 w-4 text-white animate-spin" />
+          </div>
+        )}
         {depth > 0 && (
           <div className="absolute top-0 left-0 bg-blue-500 text-white text-[6px] px-0.5 rounded-br">
             视角
@@ -623,9 +768,16 @@ function SceneCard({
         <p className="text-sm font-medium truncate">
           {depth > 0 ? `└ ${scene.viewpointName || scene.name}` : scene.name}
         </p>
-        <p className="text-xs text-muted-foreground truncate">
-          {depth > 0 ? `🎯 ${scene.viewpointName || '视角'}` : `📍 ${scene.location}`}
-        </p>
+        {generatingTask && generatingTask.status !== 'done' ? (
+          <p className="text-xs text-amber-500 truncate flex items-center gap-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {generatingTask.message || '生成中...'}
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground truncate">
+            {depth > 0 ? `🎯 ${scene.viewpointName || '视角'}` : `📍 ${scene.location}`}
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-1 text-[10px] flex-shrink-0">
         {depth === 0 ? (

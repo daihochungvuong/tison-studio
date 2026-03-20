@@ -11,7 +11,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useDirectorStore } from "@/stores/director-store";
+import { useDirectorStore, useActiveDirectorProject } from "@/stores/director-store";
 import { useAPIConfigStore } from "@/stores/api-config-store";
 import { useCharacterLibraryStore, type Character } from "@/stores/character-library-store";
 import { useAppSettingsStore } from "@/stores/app-settings-store";
@@ -49,7 +49,7 @@ import {
   type Resolution 
 } from "@/lib/storyboard/grid-calculator";
 import { uploadMultipleImages } from "@/lib/utils/image-upload";
-import { VISUAL_STYLE_PRESETS, getStyleTokens, getStylesByCategory, type VisualStyleId } from "@/lib/constants/visual-styles";
+import { VISUAL_STYLE_PRESETS, getStyleTokens, getStylesByCategory, type VisualStyleId, DEFAULT_STYLE_ID } from "@/lib/constants/visual-styles";
 import { StylePicker } from "@/components/ui/style-picker";
 
 const EXAMPLE_PROMPTS = [
@@ -76,29 +76,44 @@ interface ScreenplayInputProps {
     aspectRatio: '16:9' | '9:16';
     resolution: '2K' | '4K';
     styleTokens: string[];
+    visualStyleId?: string;
     characterDescriptions?: string[];
     characterReferenceImages?: string[];
   }) => void;
 }
 
 export function ScreenplayInput({ onGenerateStoryboard }: ScreenplayInputProps) {
-  const [prompt, setPrompt] = useState("");
+  const activeDirectorProject = useActiveDirectorProject();
+  const savedConfig = activeDirectorProject?.storyboardConfig;
+  const savedDraft = activeDirectorProject?.screenplayDraft;
+  const lastHydratedProjectIdRef = useRef<string | null>(null);
+  const savedStyleId = savedConfig?.visualStyleId;
+  const initialStyleId: StyleId = VISUAL_STYLE_PRESETS.some((s) => s.id === savedStyleId)
+    ? (savedStyleId as StyleId)
+    : (DEFAULT_STYLE_ID as StyleId);
+  const initialResolution: Resolution = savedConfig?.resolution === '4K' ? '4K' : '2K';
+
+  const [prompt, setPrompt] = useState(savedDraft?.prompt || "");
   const [images, setImages] = useState<File[]>([]);
+  const imageUrls = useMemo(() => images.map(img => URL.createObjectURL(img)), [images]);
+  useEffect(() => {
+    return () => { imageUrls.forEach(url => URL.revokeObjectURL(url)); };
+  }, [imageUrls]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [sceneCount, setSceneCount] = useState<number>(4);
-  const [styleId, setStyleId] = useState<StyleId>("ghibli");
+  const [sceneCount, setSceneCount] = useState<number>(savedConfig?.sceneCount || 4);
+  const [styleId, setStyleId] = useState<StyleId>(initialStyleId);
   const [selectedCharacters, setSelectedCharacters] = useState<DraggedCharacter[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isCharacterPopoverOpen, setIsCharacterPopoverOpen] = useState(false);
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
-  const [resolution, setResolution] = useState<Resolution>('2K');
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>(savedConfig?.aspectRatio || '9:16');
+  const [resolution, setResolution] = useState<Resolution>(initialResolution);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
   // Validate scene count against resolution limit (strong constraint)
   const sceneValidation = validateSceneCount(sceneCount, resolution);
   const isSceneCountValid = sceneValidation.isValid;
 
-  const { startScreenplayGeneration, setScreenplayError, config, updateConfig } = useDirectorStore();
+  const { startScreenplayGeneration, setScreenplayError, config, updateConfig, setScreenplayDraft } = useDirectorStore();
   const { checkVideoGenerationKeys, checkChatKeys, isFeatureConfigured, getApiKey } = useAPIConfigStore();
   const { characters } = useCharacterLibraryStore();
   const { resourceSharing } = useAppSettingsStore();
@@ -109,54 +124,141 @@ export function ScreenplayInput({ onGenerateStoryboard }: ScreenplayInputProps) 
     return characters.filter((c) => c.projectId === activeProjectId);
   }, [characters, resourceSharing.shareCharacters, activeProjectId]);
   const { setActiveTab, pendingDirectorData, setPendingDirectorData } = useMediaPanelStore();
+  const selectedCharacterIds = useMemo(
+    () => selectedCharacters.map((c) => c.characterId),
+    [selectedCharacters]
+  );
+
+  const resolveDraftCharacters = useCallback((characterIds: string[]): DraggedCharacter[] => {
+    if (!characterIds?.length) return [];
+    const seen = new Set<string>();
+    return characterIds
+      .map((id) => {
+        const libChar = visibleCharacters.find((c) => c.id === id);
+        if (!libChar || seen.has(libChar.id)) return null;
+        seen.add(libChar.id);
+        return {
+          characterId: libChar.id,
+          characterName: libChar.name,
+          visualTraits: libChar.visualTraits || libChar.description || "",
+          thumbnailUrl: libChar.views.length > 0 ? libChar.views[0].imageUrl : undefined,
+        } as DraggedCharacter;
+      })
+      .filter(Boolean) as DraggedCharacter[];
+  }, [visibleCharacters]);
+
+  // Restore persisted draft once per project (pendingDirectorData has higher priority)
+  useEffect(() => {
+    if (!activeProjectId || !activeDirectorProject) return;
+    if (pendingDirectorData) return;
+    if (lastHydratedProjectIdRef.current === activeProjectId) return;
+
+    const draftCharacterIds = savedDraft?.selectedCharacterIds || [];
+    if (draftCharacterIds.length > 0 && visibleCharacters.length === 0) return;
+
+    const restoredCharacters = resolveDraftCharacters(draftCharacterIds);
+    lastHydratedProjectIdRef.current = activeProjectId;
+    setPrompt(savedDraft?.prompt || "");
+    setSelectedCharacters(restoredCharacters);
+  }, [
+    activeProjectId,
+    activeDirectorProject,
+    pendingDirectorData,
+    savedDraft,
+    visibleCharacters.length,
+    resolveDraftCharacters,
+  ]);
 
   // Read pending data from script panel and prefill
   useEffect(() => {
-    if (pendingDirectorData) {
-      // Fill story prompt
-      if (pendingDirectorData.storyPrompt) {
-        setPrompt(pendingDirectorData.storyPrompt);
-      }
+    if (!pendingDirectorData) return;
 
-      // Set scene count (single shot = 1)
-      if (pendingDirectorData.sceneCount) {
-        setSceneCount(pendingDirectorData.sceneCount);
-      }
-
-      // Set visual style
-      if (pendingDirectorData.styleId) {
-        const validStyle = VISUAL_STYLE_PRESETS.find(s => s.id === pendingDirectorData.styleId);
-        if (validStyle) {
-          setStyleId(validStyle.id as StyleId);
-        }
-      }
-
-      // Try to match characters from library
-      if (pendingDirectorData.characterNames && pendingDirectorData.characterNames.length > 0) {
-        const matchedChars: DraggedCharacter[] = [];
-        pendingDirectorData.characterNames.forEach((name) => {
-          const libChar = visibleCharacters.find(
-            (c) => c.name === name || c.name.includes(name) || name.includes(c.name)
-          );
-          if (libChar) {
-            const thumbnailUrl = libChar.views.length > 0 ? libChar.views[0].imageUrl : undefined;
-            matchedChars.push({
-              characterId: libChar.id,
-              characterName: libChar.name,
-              visualTraits: libChar.visualTraits || libChar.description || "",
-              thumbnailUrl,
-            });
-          }
-        });
-        if (matchedChars.length > 0) {
-          setSelectedCharacters(matchedChars);
-        }
-      }
-
-      // Clear the pending data after consuming
-      setPendingDirectorData(null);
+    const hasPendingCharacterNames = (pendingDirectorData.characterNames?.length || 0) > 0;
+    const hasDraftCharacterIds = (savedDraft?.selectedCharacterIds?.length || 0) > 0;
+    if ((hasPendingCharacterNames || hasDraftCharacterIds) && visibleCharacters.length === 0) {
+      return;
     }
-  }, [pendingDirectorData, visibleCharacters, setPendingDirectorData]);
+
+    if (activeProjectId) {
+      lastHydratedProjectIdRef.current = activeProjectId;
+    }
+
+    const draftPrompt = savedDraft?.prompt || "";
+    const draftCharacters = resolveDraftCharacters(savedDraft?.selectedCharacterIds || []);
+
+    // Pending data has higher priority; draft fills missing fields.
+    setPrompt(pendingDirectorData.storyPrompt || draftPrompt);
+
+    // Set scene count (single shot = 1)
+    if (pendingDirectorData.sceneCount) {
+      setSceneCount(pendingDirectorData.sceneCount);
+    }
+
+    // Set visual style
+    if (pendingDirectorData.styleId) {
+      const validStyle = VISUAL_STYLE_PRESETS.find(s => s.id === pendingDirectorData.styleId);
+      if (validStyle) {
+        setStyleId(validStyle.id as StyleId);
+      }
+    }
+
+    // Match pending character names first; fallback to draft character IDs.
+    let matchedChars: DraggedCharacter[] = [];
+    if (hasPendingCharacterNames) {
+      matchedChars = pendingDirectorData.characterNames!.map((name) => {
+        const libChar = visibleCharacters.find(
+          (c) => c.name === name || c.name.includes(name) || name.includes(c.name)
+        );
+        if (!libChar) return null;
+        const thumbnailUrl = libChar.views.length > 0 ? libChar.views[0].imageUrl : undefined;
+        return {
+          characterId: libChar.id,
+          characterName: libChar.name,
+          visualTraits: libChar.visualTraits || libChar.description || "",
+          thumbnailUrl,
+        } as DraggedCharacter;
+      }).filter(Boolean) as DraggedCharacter[];
+    }
+    setSelectedCharacters(matchedChars.length > 0 ? matchedChars : draftCharacters);
+
+    // Clear the pending data after consuming
+    setPendingDirectorData(null);
+  }, [
+    pendingDirectorData,
+    visibleCharacters,
+    setPendingDirectorData,
+    activeProjectId,
+    savedDraft,
+    resolveDraftCharacters,
+  ]);
+
+  // Persist screenplay draft to store (debounced) to survive panel/module switching
+  useEffect(() => {
+    if (!activeProjectId || pendingDirectorData) return;
+
+    const savedCharacterIds = savedDraft?.selectedCharacterIds || [];
+    const sameCharacters =
+      selectedCharacterIds.length === savedCharacterIds.length &&
+      selectedCharacterIds.every((id, idx) => id === savedCharacterIds[idx]);
+    const samePrompt = prompt === (savedDraft?.prompt || "");
+    if (samePrompt && sameCharacters) return;
+
+    const timer = window.setTimeout(() => {
+      setScreenplayDraft({
+        prompt,
+        selectedCharacterIds,
+      });
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeProjectId,
+    pendingDirectorData,
+    prompt,
+    selectedCharacterIds,
+    savedDraft,
+    setScreenplayDraft,
+  ]);
 
   // Get max scene options based on resolution
   const getMaxSceneOptions = () => {
@@ -333,6 +435,7 @@ export function ScreenplayInput({ onGenerateStoryboard }: ScreenplayInputProps) 
           aspectRatio,
           resolution,
           styleTokens: actualStyleTokens,
+          visualStyleId: styleId === "random" ? undefined : styleId,
           characterDescriptions: characterDescriptions.length > 0 ? characterDescriptions : undefined,
           characterReferenceImages: characterReferenceImages.length > 0 ? characterReferenceImages : undefined,
         });
@@ -727,10 +830,10 @@ export function ScreenplayInput({ onGenerateStoryboard }: ScreenplayInputProps) 
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          {images.map((img, i) => (
+          {images.map((_img, i) => (
             <div key={i} className="relative group">
               <img
-                src={URL.createObjectURL(img)}
+                src={imageUrls[i]}
                 alt={`Reference ${i + 1}`}
                 className="w-16 h-16 object-cover rounded-md border"
               />

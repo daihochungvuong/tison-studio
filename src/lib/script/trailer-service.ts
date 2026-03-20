@@ -291,6 +291,7 @@ export function convertShotsToSplitScenes(
     col: index,
     sourceRect: { x: 0, y: 0, width: 0, height: 0 },
     endFrameImageUrl: null,
+    endFrameHttpUrl: null,
     endFrameSource: null,
     characterIds: [],
     emotionTags: (shot.emotionTags || []) as any,

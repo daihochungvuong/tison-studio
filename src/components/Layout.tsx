@@ -24,6 +24,8 @@ import { FreedomView } from "@/components/panels/freedom";
 import { MediaView } from "@/components/panels/media";
 import { SettingsPanel } from "@/components/panels/SettingsPanel";
 import { ExportView } from "@/components/panels/export";
+import { OverviewPanel } from "@/components/panels/overview";
+import { AssetsView } from "@/components/panels/assets";
 
 export function Layout() {
   const { activeTab, inProject } = useMediaPanelStore();
@@ -42,19 +44,21 @@ export function Layout() {
 
   // Full-screen views (no resizable panels)
   // 这些板块有自己的多栏布局，不需要全局的预览和属性面板
-  const fullScreenTabs = ["export", "settings", "script", "characters", "scenes", "freedom"];
+  const fullScreenTabs = ["export", "settings", "overview", "script", "characters", "scenes", "freedom", "assets"];
   if (fullScreenTabs.includes(activeTab)) {
     return (
       <div className="h-full flex bg-background">
         <TabBar />
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
           <ProjectHeader />
           {activeTab === "export" && <ExportView />}
           {activeTab === "settings" && <SettingsPanel />}
+          {activeTab === "overview" && <OverviewPanel />}
           {activeTab === "script" && <ScriptView />}
           {activeTab === "characters" && <CharactersView />}
           {activeTab === "scenes" && <ScenesView />}
           {activeTab === "freedom" && <FreedomView />}
+          {activeTab === "assets" && <AssetsView />}
         </div>
       </div>
     );

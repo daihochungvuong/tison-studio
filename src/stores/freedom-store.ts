@@ -104,7 +104,7 @@ const initialState: FreedomState = {
   activeStudio: 'image',
   
   imagePrompt: '',
-  selectedImageModel: 'nano-banana-pro',
+  selectedImageModel: '',
   imageAspectRatio: '16:9',
   imageResolution: '',
   imageExtraParams: {},
@@ -112,7 +112,7 @@ const initialState: FreedomState = {
   imageGenerating: false,
   
   videoPrompt: '',
-  selectedVideoModel: 'seedance-pro-t2v',
+  selectedVideoModel: '',
   videoAspectRatio: '16:9',
   videoDuration: 5,
   videoResolution: '720p',

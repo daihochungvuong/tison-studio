@@ -77,14 +77,14 @@ export function Dashboard() {
       setNewProjectName("");
       setShowNewProject(false);
       await switchProject(project.id);
-      setActiveTab("script");
+      setActiveTab("overview");
     }
   };
 
   const handleOpenProject = async (projectId: string) => {
     if (selectionMode) return; // Don't open in selection mode
     await switchProject(projectId);
-    setActiveTab("script");
+    setActiveTab("overview");
   };
 
   // ==================== Selection ====================

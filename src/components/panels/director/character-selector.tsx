@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useMemo } from "react";
+import { cn } from "@/lib/utils";
 import { Check, User, Users } from "lucide-react";
 import { useCharacterLibraryStore } from "@/stores/character-library-store";
 import { useAppSettingsStore } from "@/stores/app-settings-store";
@@ -22,12 +23,16 @@ import {
 interface CharacterSelectorProps {
   selectedIds: string[];
   onChange: (ids: string[]) => void;
+  characterVariationMap?: Record<string, string>;
+  onChangeVariation?: (charId: string, variationId: string | undefined) => void;
   disabled?: boolean;
 }
 
 export function CharacterSelector({
   selectedIds,
   onChange,
+  characterVariationMap,
+  onChangeVariation,
   disabled,
 }: CharacterSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -53,6 +58,10 @@ export function CharacterSelector({
   const toggleCharacter = (charId: string) => {
     if (selectedIds.includes(charId)) {
       onChange(selectedIds.filter(id => id !== charId));
+      // Also clear variation mapping when deselecting
+      if (characterVariationMap?.[charId]) {
+        onChangeVariation?.(charId, undefined);
+      }
     } else {
       onChange([...selectedIds, charId]);
     }
@@ -84,26 +93,82 @@ export function CharacterSelector({
             角色库为空，请先创建角色
           </p>
         ) : (
-          <div className="max-h-[200px] overflow-y-auto space-y-1">
+          <div className="max-h-[280px] overflow-y-auto space-y-1">
             {visibleCharacters.map((char) => {
               const isSelected = selectedIds.includes(char.id);
               const thumbnail = char.views[0]?.imageUrl;
+              // Filter variations that have generated images
+              const availableVariations = (char.variations || []).filter(v => !!v.referenceImage);
+              const selectedVarId = characterVariationMap?.[char.id];
+              const selectedVarName = selectedVarId
+                ? availableVariations.find(v => v.id === selectedVarId)?.name
+                : undefined;
               return (
-                <button
-                  key={char.id}
-                  onClick={() => toggleCharacter(char.id)}
-                  className="w-full flex items-center gap-2 p-1.5 rounded hover:bg-muted text-left"
-                >
-                  {thumbnail ? (
-                    <img src={thumbnail} alt={char.name} className="w-6 h-6 rounded object-cover" />
-                  ) : (
-                    <div className="w-6 h-6 rounded bg-muted flex items-center justify-center">
-                      <User className="h-3 w-3" />
+                <div key={char.id} className="space-y-0.5">
+                  <button
+                    onClick={() => toggleCharacter(char.id)}
+                    className="w-full flex items-center gap-2 p-1.5 rounded hover:bg-muted text-left"
+                  >
+                    {thumbnail ? (
+                      <img src={thumbnail} alt={char.name} className="w-6 h-6 rounded object-cover" />
+                    ) : (
+                      <div className="w-6 h-6 rounded bg-muted flex items-center justify-center">
+                        <User className="h-3 w-3" />
+                      </div>
+                    )}
+                    <span className="flex-1 text-xs truncate">
+                      {char.name}
+                      {isSelected && selectedVarName && (
+                        <span className="ml-1 text-primary/70">·{selectedVarName}</span>
+                      )}
+                    </span>
+                    {isSelected && <Check className="h-3 w-3 text-primary" />}
+                  </button>
+                  {/* Variation list: show when selected and has available variations */}
+                  {isSelected && availableVariations.length > 0 && onChangeVariation && (
+                    <div className="ml-8 mr-1 mb-1 space-y-0.5">
+                      {/* 基础定妆照 */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onChangeVariation(char.id, undefined); }}
+                        className={cn(
+                          "w-full flex items-center gap-1.5 p-1 rounded text-left hover:bg-muted/80 transition-colors",
+                          !selectedVarId && "bg-primary/10"
+                        )}
+                      >
+                        {thumbnail ? (
+                          <img src={thumbnail} alt="基础定妆照" className="w-8 h-8 rounded object-cover shrink-0 border border-muted-foreground/10" />
+                        ) : (
+                          <div className="w-8 h-8 rounded bg-muted flex items-center justify-center shrink-0">
+                            <User className="h-3 w-3" />
+                          </div>
+                        )}
+                        <span className="flex-1 text-[11px] truncate">基础定妆照</span>
+                        {!selectedVarId && <Check className="h-3 w-3 text-primary shrink-0" />}
+                      </button>
+                      {/* 变体列表 */}
+                      {availableVariations.map((v) => (
+                        <button
+                          key={v.id}
+                          onClick={(e) => { e.stopPropagation(); onChangeVariation(char.id, v.id); }}
+                          className={cn(
+                            "w-full flex items-center gap-1.5 p-1 rounded text-left hover:bg-muted/80 transition-colors",
+                            selectedVarId === v.id && "bg-primary/10"
+                          )}
+                        >
+                          {v.referenceImage ? (
+                            <img src={v.referenceImage} alt={v.name} className="w-8 h-8 rounded object-cover shrink-0 border border-muted-foreground/10" />
+                          ) : (
+                            <div className="w-8 h-8 rounded bg-muted flex items-center justify-center shrink-0">
+                              <User className="h-3 w-3" />
+                            </div>
+                          )}
+                          <span className="flex-1 text-[11px] truncate">{v.name}</span>
+                          {selectedVarId === v.id && <Check className="h-3 w-3 text-primary shrink-0" />}
+                        </button>
+                      ))}
                     </div>
                   )}
-                  <span className="flex-1 text-xs truncate">{char.name}</span>
-                  {isSelected && <Check className="h-3 w-3 text-primary" />}
-                </button>
+                </div>
               );
             })}
           </div>

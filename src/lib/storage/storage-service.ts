@@ -158,6 +158,16 @@ class StorageService {
   }
 
   async deleteProject({ id }: { id: string }): Promise<void> {
+    // 先清理项目关联的媒体和时间线数据，避免僵尸数据残留
+    try {
+      await Promise.all([
+        this.deleteProjectMedia({ projectId: id }),
+        this.deleteProjectTimeline({ projectId: id }),
+      ]);
+    } catch (err) {
+      console.warn(`[StorageService] 清理项目 ${id} 关联数据失败:`, err);
+      // 即使清理失败也继续删除项目元数据，避免阻塞用户操作
+    }
     await this.projectsAdapter.remove(id);
   }
 
@@ -171,17 +181,21 @@ class StorageService {
   }): Promise<void> {
     const { mediaMetadataAdapter, mediaFilesAdapter } =
       this.getProjectMediaAdapters({ projectId });
+    const file = mediaItem.file;
+    if (!file) {
+      return;
+    }
 
     // Save file to project-specific OPFS
-    await mediaFilesAdapter.set(mediaItem.id, mediaItem.file);
+    await mediaFilesAdapter.set(mediaItem.id, file);
 
     // Save metadata to project-specific IndexedDB
     const metadata: MediaFileData = {
       id: mediaItem.id,
       name: mediaItem.name,
       type: mediaItem.type,
-      size: mediaItem.file.size,
-      lastModified: mediaItem.file.lastModified,
+      size: file.size,
+      lastModified: file.lastModified,
       width: mediaItem.width,
       height: mediaItem.height,
       duration: mediaItem.duration,
@@ -337,10 +351,22 @@ class StorageService {
 
   // Utility methods
   async clearAllData(): Promise<void> {
-    // Clear all projects
+    // 先获取所有项目 ID，逐个清理关联的媒体和时间线数据
+    try {
+      const projectIds = await this.projectsAdapter.list();
+      await Promise.all(
+        projectIds.map(id =>
+          Promise.all([
+            this.deleteProjectMedia({ projectId: id }).catch(() => {}),
+            this.deleteProjectTimeline({ projectId: id }).catch(() => {}),
+          ])
+        )
+      );
+    } catch (err) {
+      console.warn('[StorageService] 清理关联数据失败:', err);
+    }
+    // 最后清除项目元数据
     await this.projectsAdapter.clear();
-
-    // Note: Project-specific media and timelines will be cleaned up when projects are deleted
   }
 
   async getStorageInfo(): Promise<{

@@ -7,6 +7,15 @@ export type CompletionStatus = 'pending' | 'in_progress' | 'completed';
 // 提示词语言选项
 export type PromptLanguage = 'zh' | 'en' | 'zh+en';
 
+// AI角色校准严格度
+export type CalibrationStrictness = 'strict' | 'normal' | 'loose';
+
+/** 被过滤的角色记录（用于恢复） */
+export interface FilteredCharacterRecord {
+  name: string;
+  reason: string;
+}
+
 /**
  * 角色阶段信息
  * 用于标识角色在特定集数范围内的形象版本
@@ -194,7 +203,7 @@ export interface ProjectBackground {
   title: string;              // 剧名
   genre?: string;             // 类型（商战/武侠/爱情等）
   era?: string;               // 时代背景（民国/现代/古代等）
-  timelineSetting?: string;   // 精确时间线设定（如“2022年夏天”、“1990-2020年”）
+  timelineSetting?: string;   // 精确时间线设定（如"2022年夏天"、"1990-2020年"）
   storyStartYear?: number;    // 故事开始年份（用于推算角色年龄）
   storyEndYear?: number;      // 故事结束年份
   totalEpisodes?: number;     // 总集数
@@ -202,6 +211,67 @@ export interface ProjectBackground {
   characterBios: string;      // 人物小传
   worldSetting?: string;      // 世界观/风格设定
   themes?: string[];          // 主题关键词
+}
+
+// ==================== 剧级数据（SeriesMeta）— 跨集共享 ====================
+
+/** 命名实体：地理/物品/阵营等 */
+export interface NamedEntity {
+  name: string;
+  desc: string;
+}
+
+/** 阵营/势力 */
+export interface Faction {
+  name: string;
+  members: string[];
+}
+
+/** 角色关系 */
+export interface CharacterRelationship {
+  from: string;
+  to: string;
+  type: string;
+}
+
+/**
+ * 剧级元数据 — 项目主页展示，所有集共享
+ * 首次导入时由 AI + 正则自动填充，校准后回写丰富
+ */
+export interface SeriesMeta {
+  // === 故事核心 ===
+  title: string;
+  logline?: string;                   // 一句话概括
+  outline?: string;                   // 100-500字完整故事线
+  centralConflict?: string;           // 主线矛盾
+  themes?: string[];                  // [复仇, 权谋, 友情]
+
+  // === 世界观 ===
+  era?: string;                       // 古代/现代/未来
+  genre?: string;                     // 武侠/商战/爱情
+  timelineSetting?: string;           // 精确时间线
+  geography?: NamedEntity[];          // 地理设定
+  socialSystem?: string;              // 社会体系
+  powerSystem?: string;               // 力量体系
+  keyItems?: NamedEntity[];           // 关键物品
+  worldNotes?: string;                // 世界观补充（自由文本）
+
+  // === 角色体系 ===
+  characters: ScriptCharacter[];      // 从 scriptData.characters 提升
+  factions?: Faction[];               // 阵营/势力
+  relationships?: CharacterRelationship[];  // 角色关系
+
+  // === 视觉系统 ===
+  styleId?: string;
+  recurringLocations?: ScriptScene[]; // 常驻场景库（≥2集出现的）
+  colorPalette?: string;              // 全剧主色调
+
+  // === 制作设定 ===
+  language?: string;
+  promptLanguage?: PromptLanguage;
+  calibrationStrictness?: CalibrationStrictness;
+  metadataMarkdown?: string;          // AI 知识库 MD
+  metadataGeneratedAt?: number;
 }
 
 // 集（Episode）

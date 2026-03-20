@@ -8,7 +8,8 @@
  * Uses the same structured format as Merged Generation for consistency.
  */
 
-import { calculateGrid, type AspectRatio, type Resolution, RESOLUTION_PRESETS } from './grid-calculator';
+import { calculateGrid, type AspectRatio, type Resolution } from './grid-calculator';
+import { getStyleTokens as getStyleTokensFromVisualStyles } from '@/lib/constants/visual-styles';
 
 export interface CharacterInfo {
   name: string;
@@ -106,21 +107,10 @@ export function buildRegenerationPrompt(config: StoryboardPromptConfig): string 
 
 /**
  * Extract style tokens from style preset ID
+ * 统一使用 visual-styles 风格库，兼容旧 ID
  */
 export function getStyleTokensFromPreset(styleId: string): string[] {
-  const STYLE_PRESETS: Record<string, string[]> = {
-    ghibli: ['Studio Ghibli style', 'anime', 'soft colors', 'hand-drawn', 'whimsical'],
-    miyazaki: ['Miyazaki style', 'detailed backgrounds', 'fantasy', 'nature elements', 'dreamlike'],
-    disney: ['Disney animation style', '3D render', 'vibrant colors', 'expressive characters'],
-    pixar: ['Pixar style', '3D animation', 'detailed textures', 'cinematic lighting'],
-    cyberpunk: ['cyberpunk', 'neon lights', 'futuristic', 'dark atmosphere', 'high tech'],
-    watercolor: ['watercolor painting', 'soft edges', 'artistic', 'pastel colors', 'fluid'],
-    realistic: ['realistic', 'photorealistic', 'detailed', 'lifelike', 'high definition'],
-    anime: ['anime style', 'manga art', '2D animation', 'cel shaded', 'vibrant'],
-    idealized_realism: ['idealized realism', 'semi-realistic 2.5D illustration', 'Unreal Engine 5 render quality', 'volumetric lighting', 'detailed material textures (metal, fabric, fire)', 'cinematic atmosphere', 'highly detailed', 'between 2D and 3D'],
-  };
-  
-  return STYLE_PRESETS[styleId] || STYLE_PRESETS.ghibli;
+  return getStyleTokensFromVisualStyles(styleId);
 }
 
 /**

@@ -8,8 +8,8 @@
  * 中间栏：层级结构预览（集→场景→分镜）+ 状态追踪 + CRUD管理
  */
 
-import { useState, useMemo, useCallback } from "react";
-import type { ScriptData, ScriptCharacter, ScriptScene, Episode, Shot, CompletionStatus, ProjectBackground, EpisodeRawScript } from "@/types/script";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import type { ScriptData, ScriptCharacter, ScriptScene, Episode, Shot, CompletionStatus, ProjectBackground, EpisodeRawScript, CalibrationStrictness, FilteredCharacterRecord } from "@/types/script";
 import { getShotCompletionStatus, calculateProgress } from "@/lib/script/shot-utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuSeparator,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
@@ -91,10 +97,10 @@ interface EpisodeTreeProps {
   selectedItemId: string | null;
   selectedItemType: "character" | "scene" | "shot" | "episode" | null;
   onSelectItem: (id: string, type: "character" | "scene" | "shot" | "episode") => void;
-  // CRUD callbacks
-  onAddEpisode?: (episode: Episode) => void;
-  onUpdateEpisode?: (id: string, updates: Partial<Episode>) => void;
-  onDeleteEpisode?: (id: string) => void;
+  // CRUD callbacks (Bundle 版本，同步 episodeRawScripts)
+  onAddEpisodeBundle?: (title: string, synopsis: string) => void;
+  onUpdateEpisodeBundle?: (episodeIndex: number, updates: { title?: string; synopsis?: string }) => void;
+  onDeleteEpisodeBundle?: (episodeIndex: number) => void;
   onAddScene?: (scene: ScriptScene, episodeId?: string) => void;
   onUpdateScene?: (id: string, updates: Partial<ScriptScene>) => void;
   onDeleteScene?: (id: string) => void;
@@ -140,6 +146,17 @@ interface EpisodeTreeProps {
   // 单个分镜校准 callback
   onCalibrateSingleShot?: (shotId: string) => void;
   singleShotCalibrationStatus?: Record<string, 'idle' | 'calibrating' | 'completed' | 'error'>;
+  // 校准严格度相关
+  calibrationStrictness?: CalibrationStrictness;
+  onCalibrationStrictnessChange?: (strictness: CalibrationStrictness) => void;
+  lastFilteredCharacters?: FilteredCharacterRecord[];
+  onRestoreFilteredCharacter?: (characterName: string) => void;
+  // 校准确认弹窗
+  calibrationDialogOpen?: boolean;
+  pendingCalibrationCharacters?: ScriptCharacter[] | null;
+  pendingFilteredCharacters?: FilteredCharacterRecord[];
+  onConfirmCalibration?: (kept: ScriptCharacter[], filtered: FilteredCharacterRecord[]) => void;
+  onCancelCalibration?: () => void;
 }
 
 export function EpisodeTree({
@@ -149,9 +166,9 @@ export function EpisodeTree({
   selectedItemId,
   selectedItemType,
   onSelectItem,
-  onAddEpisode,
-  onUpdateEpisode,
-  onDeleteEpisode,
+  onAddEpisodeBundle,
+  onUpdateEpisodeBundle,
+  onDeleteEpisodeBundle,
   onAddScene,
   onUpdateScene,
   onDeleteScene,
@@ -185,6 +202,17 @@ export function EpisodeTree({
   // 单个分镜校准
   onCalibrateSingleShot,
   singleShotCalibrationStatus,
+  // 校准严格度相关
+  calibrationStrictness,
+  onCalibrationStrictnessChange,
+  lastFilteredCharacters,
+  onRestoreFilteredCharacter,
+  // 校准确认弹窗
+  calibrationDialogOpen,
+  pendingCalibrationCharacters,
+  pendingFilteredCharacters,
+  onConfirmCalibration,
+  onCancelCalibration,
 }: EpisodeTreeProps) {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<string>>(new Set(["default"]));
   const [expandedScenes, setExpandedScenes] = useState<Set<string>>(new Set());
@@ -230,6 +258,73 @@ export function EpisodeTree({
     message: string;
     scene?: ScriptScene;
   } | null>(null);
+
+  // 被过滤角色查看弹窗
+  const [filteredCharsDialogOpen, setFilteredCharsDialogOpen] = useState(false);
+  
+  // 校准确认弹窗的本地编辑状态
+  const [localKeptCharacters, setLocalKeptCharacters] = useState<ScriptCharacter[]>([]);
+  const [localFilteredCharacters, setLocalFilteredCharacters] = useState<FilteredCharacterRecord[]>([]);
+  // 缓存用户手动移除的角色完整数据，便于恢复时不丢失 AI 生成的字段
+  const [removedCharactersCache, setRemovedCharactersCache] = useState<Map<string, ScriptCharacter>>(new Map());
+  
+  // 当确认弹窗打开时，从 props 同步
+  useEffect(() => {
+    if (calibrationDialogOpen && pendingCalibrationCharacters) {
+      setLocalKeptCharacters([...pendingCalibrationCharacters]);
+      setLocalFilteredCharacters([...(pendingFilteredCharacters || [])]);
+      setRemovedCharactersCache(new Map());
+    }
+  }, [calibrationDialogOpen, pendingCalibrationCharacters, pendingFilteredCharacters]);
+  
+  // 从保留列表移除角色（缓存完整数据以便恢复）
+  const handleRemoveKeptCharacter = useCallback((charId: string) => {
+    const char = localKeptCharacters.find(c => c.id === charId);
+    if (!char) return;
+    setRemovedCharactersCache(prev => {
+      const next = new Map(prev);
+      next.set(char.name, char);
+      return next;
+    });
+    setLocalKeptCharacters(prev => prev.filter(c => c.id !== charId));
+    setLocalFilteredCharacters(prev => [...prev, { name: char.name, reason: '用户手动移除' }]);
+  }, [localKeptCharacters]);
+  
+  // 从过滤列表恢复角色到保留列表
+  const handleRestoreToKept = useCallback((characterName: string) => {
+    setLocalFilteredCharacters(prev => prev.filter(fc => fc.name !== characterName));
+    // 优先从缓存恢复完整角色数据，避免丢失 AI 生成的字段
+    const cachedChar = removedCharactersCache.get(characterName);
+    if (cachedChar) {
+      setLocalKeptCharacters(prev => [...prev, cachedChar]);
+      setRemovedCharactersCache(prev => {
+        const next = new Map(prev);
+        next.delete(characterName);
+        return next;
+      });
+    } else {
+      setLocalKeptCharacters(prev => [...prev, {
+        id: `char_restored_${Date.now()}`,
+        name: characterName,
+        tags: ['extra', 'restored'],
+      }]);
+    }
+  }, [removedCharactersCache]);
+  
+  // 确认校准结果
+  const handleConfirmCalibrationLocal = useCallback(() => {
+    onConfirmCalibration?.(localKeptCharacters, localFilteredCharacters);
+  }, [localKeptCharacters, localFilteredCharacters, onConfirmCalibration]);
+  
+  // 全部保留（恢复所有被过滤的角色并确认）
+  const handleRestoreAllAndConfirm = useCallback(() => {
+    const restored: ScriptCharacter[] = localFilteredCharacters.map((fc, i) => ({
+      id: `char_restored_${Date.now()}_${i}`,
+      name: fc.name,
+      tags: ['extra', 'restored'],
+    }));
+    onConfirmCalibration?.([...localKeptCharacters, ...restored], []);
+  }, [localKeptCharacters, localFilteredCharacters, onConfirmCalibration]);
 
   // 如果没有episodes，创建一个默认的
   const episodes = useMemo(() => {
@@ -301,16 +396,12 @@ export function EpisodeTree({
 
   const handleSaveEpisode = () => {
     if (editingItem?.type === "episode") {
-      onUpdateEpisode?.(editingItem.id, { title: formData.title, description: formData.description });
+      const ep = episodes.find(e => e.id === editingItem.id);
+      if (ep) {
+        onUpdateEpisodeBundle?.(ep.index, { title: formData.title, synopsis: formData.description });
+      }
     } else {
-      const newEp: Episode = {
-        id: `ep_${Date.now()}`,
-        index: episodes.length + 1,
-        title: formData.title || `第${episodes.length + 1}集`,
-        description: formData.description,
-        sceneIds: [],
-      };
-      onAddEpisode?.(newEp);
+      onAddEpisodeBundle?.(formData.title || `第${episodes.length + 1}集`, formData.description || '');
     }
     setEpisodeDialogOpen(false);
     setFormData({});
@@ -491,9 +582,11 @@ export function EpisodeTree({
   const confirmDelete = () => {
     if (!deleteItem) return;
     switch (deleteItem.type) {
-      case "episode":
-        onDeleteEpisode?.(deleteItem.id);
+      case "episode": {
+        const ep = episodes.find(e => e.id === deleteItem.id);
+        if (ep) onDeleteEpisodeBundle?.(ep.index);
         break;
+      }
       case "scene":
         onDeleteScene?.(deleteItem.id);
         break;
@@ -799,7 +892,7 @@ export function EpisodeTree({
                   <button
                     onClick={() => toggleEpisode(episode.id)}
                     className={cn(
-                      "flex-1 flex items-center gap-1 px-2 py-1.5 rounded hover:bg-muted text-left",
+                      "flex-1 min-w-0 flex items-center gap-1 px-2 py-1.5 rounded hover:bg-muted text-left overflow-hidden",
                       selectedItemId === `episode_${episode.index}` &&
                         selectedItemType === "episode" &&
                         "bg-primary/10"
@@ -1091,6 +1184,25 @@ export function EpisodeTree({
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={onCalibrateCharacters}>
                               <Wand2 className="h-3 w-3 mr-2" />AI角色校准
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger className="text-xs">
+                                <Wand2 className="h-3 w-3 mr-2" />校准严格度
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent>
+                                <DropdownMenuRadioGroup
+                                  value={calibrationStrictness || 'normal'}
+                                  onValueChange={(v) => onCalibrationStrictnessChange?.(v as CalibrationStrictness)}
+                                >
+                                  <DropdownMenuRadioItem value="strict" className="text-xs">严格</DropdownMenuRadioItem>
+                                  <DropdownMenuRadioItem value="normal" className="text-xs">标准</DropdownMenuRadioItem>
+                                  <DropdownMenuRadioItem value="loose" className="text-xs">宽松</DropdownMenuRadioItem>
+                                </DropdownMenuRadioGroup>
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                            <DropdownMenuItem onClick={() => setFilteredCharsDialogOpen(true)}>
+                              <Filter className="h-3 w-3 mr-2" />查看被过滤角色
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1512,6 +1624,114 @@ export function EpisodeTree({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 角色校准确认弹窗 */}
+      <Dialog open={calibrationDialogOpen} onOpenChange={(open) => { if (!open) onCancelCalibration?.(); }}>
+        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="h-4 w-4" />
+              角色校准结果确认
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-2">
+            {/* 保留角色列表 */}
+            <div>
+              <h4 className="text-sm font-medium mb-2">保留角色 ({localKeptCharacters.length})</h4>
+              <div className="space-y-1 max-h-48 overflow-y-auto border rounded-md p-2">
+                {localKeptCharacters.map(char => {
+                  const importance = char.tags?.find(t => ['protagonist', 'supporting', 'minor', 'extra'].includes(t));
+                  const labels: Record<string, string> = { protagonist: '主角', supporting: '配角', minor: '次要', extra: '群演' }; // TODO: extract to module constant
+                  return (
+                    <div key={char.id} className="flex items-center justify-between px-2 py-1 rounded hover:bg-muted text-xs">
+                      <div className="flex items-center gap-2">
+                        <span>{char.name}</span>
+                        {importance && (
+                          <span className="text-muted-foreground text-[10px]">({labels[importance] || importance})</span>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost" size="sm" className="h-5 w-5 p-0 text-destructive hover:text-destructive"
+                        onClick={() => handleRemoveKeptCharacter(char.id)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            
+            {/* 被过滤角色列表 */}
+            {localFilteredCharacters.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium mb-2">被过滤角色 ({localFilteredCharacters.length})</h4>
+                <div className="space-y-1 max-h-32 overflow-y-auto border rounded-md p-2">
+                  {localFilteredCharacters.map((fc, i) => (
+                    <div key={`${fc.name}_${i}`} className="flex items-center justify-between px-2 py-1 rounded hover:bg-muted text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground line-through">{fc.name}</span>
+                        <span className="text-muted-foreground text-[10px]">({fc.reason})</span>
+                      </div>
+                      <Button
+                        variant="ghost" size="sm" className="h-5 w-5 p-0 text-green-600 hover:text-green-700"
+                        onClick={() => handleRestoreToKept(fc.name)}
+                      >
+                        <Check className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={onCancelCalibration}>取消</Button>
+            {localFilteredCharacters.length > 0 && (
+              <Button variant="secondary" onClick={handleRestoreAllAndConfirm}>全部保留</Button>
+            )}
+            <Button onClick={handleConfirmCalibrationLocal}>确认</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 查看被过滤角色弹窗 */}
+      <Dialog open={filteredCharsDialogOpen} onOpenChange={setFilteredCharsDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>被过滤的角色</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            {(lastFilteredCharacters && lastFilteredCharacters.length > 0) ? (
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {lastFilteredCharacters.map((fc, i) => (
+                  <div key={`${fc.name}_${i}`} className="flex items-center justify-between px-2 py-1 rounded hover:bg-muted text-xs">
+                    <div>
+                      <span>{fc.name}</span>
+                      <span className="text-muted-foreground ml-2">({fc.reason})</span>
+                    </div>
+                    <Button
+                      variant="ghost" size="sm" className="h-5 text-xs px-1 text-green-600"
+                      onClick={() => {
+                        onRestoreFilteredCharacter?.(fc.name);
+                      }}
+                    >
+                      恢复
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-4">没有被过滤的角色</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFilteredCharsDialogOpen(false)}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

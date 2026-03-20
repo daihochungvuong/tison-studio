@@ -323,10 +323,12 @@ export function buildVideoPrompt(
   }
 
   // ---------- Layer 5: 视觉风格 (Style) ----------
-  // styleTokens 不再注入（校准后的 videoPrompt 已包含风格描述，避免双重注入）
+  if (config.styleTokens && config.styleTokens.length > 0) {
+    promptParts.push(`Style: ${config.styleTokens.join(', ')}`);
+  }
 
   // ---------- Base Prompt: 用户视频提示词 ----------
-  const basePrompt = scene.videoPrompt || scene.videoPromptZh || '';
+  const basePrompt = scene.videoPromptZh || scene.videoPrompt || '';
   if (basePrompt.trim()) {
     promptParts.push(basePrompt.trim());
   }

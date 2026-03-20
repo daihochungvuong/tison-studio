@@ -9,32 +9,48 @@
 export interface RetryOptions {
   maxRetries?: number;
   baseDelay?: number;
+  retryOn429?: boolean;
   onRetry?: (attempt: number, delay: number, error: Error) => void;
 }
 
 /**
- * Check if an error is a rate limit error (429 or quota exceeded)
+ * Check if an error is retryable (rate limit, overload, or temporary service unavailability)
+ * Covers: 429 rate limit, 503 service unavailable, 529 overloaded (Anthropic/some providers)
  */
 export function isRateLimitError(error: unknown): boolean {
   if (!error) return false;
-  
+
   const err = error as any;
-  
-  // Check status code
-  if (err.status === 429 || err.code === 429) return true;
-  
-  // Check error message
+
+  // Check status code: 429 rate limit, 500 server error, 502 bad gateway, 503 service unavailable, 529 overloaded
+  if (err.status === 429 || err.status === 500 || err.status === 502 || err.status === 503 || err.status === 529) return true;
+  if (err.code === 429 || err.code === 500 || err.code === 502 || err.code === 503 || err.code === 529) return true;
+
   const message = err.message?.toLowerCase() || "";
   if (
-    message.includes("429") ||
+    message.includes("429") ||    message.includes("500") ||    message.includes("502") ||    message.includes("503") ||
+    message.includes("529") ||
     message.includes("quota") ||
     message.includes("rate") ||
     message.includes("resource_exhausted") ||
-    message.includes("too many requests")
+    message.includes("too many requests") ||
+    message.includes("overloaded") ||
+    message.includes("service unavailable") ||
+    message.includes("temporarily unavailable") ||
+    message.includes("internal server error") ||
+    message.includes("上游负载") ||
+    message.includes("上游服务") ||
+    message.includes("饱和") ||
+    message.includes("负载已满") ||
+    message.includes("暂时不可用") ||
+    message.includes("服务暂时不可用") ||
+    message.includes("无可用渠道") ||
+    message.includes("no available channel") ||
+    message.includes("server error")
   ) {
     return true;
   }
-  
+
   return false;
 }
 
@@ -50,25 +66,27 @@ export async function retryOperation<T>(
   operation: () => Promise<T>,
   options: RetryOptions = {}
 ): Promise<T> {
-  const { maxRetries = 3, baseDelay = 2000, onRetry } = options;
+  const { maxRetries = 3, baseDelay = 2000, retryOn429 = true, onRetry } = options;
   
   let lastError: Error | undefined;
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+
+  // maxRetries 表示"失败后最多重试几次"，首次尝试不计入重试
+  // 总共尝试 1 + maxRetries 次
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await operation();
     } catch (error) {
       lastError = error as Error;
-      
-      // Only retry on rate limit errors
-      if (!isRateLimitError(error)) {
+
+      // Only retry on rate limit errors (when enabled)
+      if (!retryOn429 || !isRateLimitError(error)) {
         throw error;
       }
-      
+
       // Check if we have more retries left
-      if (attempt < maxRetries - 1) {
+      if (attempt < maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt);
-        
+
         if (onRetry) {
           onRetry(attempt + 1, delay, lastError);
         } else {
@@ -76,12 +94,12 @@ export async function retryOperation<T>(
             `[Retry] Rate limit hit, retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`
           );
         }
-        
+
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
-  
+
   throw lastError;
 }
 

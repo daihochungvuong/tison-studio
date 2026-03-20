@@ -12,7 +12,7 @@ import { readImageAsBase64 } from '@/lib/image-storage';
 
 /**
  * Upload base64 image and get HTTP URL
- * Uses the configured image host (imgbb/custom)
+ * Uses the configured image host (imgbb/imgurl/custom)
  * Supports: base64 data URI, HTTP URL, local-image:// paths
  */
 export async function uploadBase64Image(imageData: string): Promise<string> {
@@ -42,7 +42,7 @@ export async function uploadBase64Image(imageData: string): Promise<string> {
   }
 
   const result = await uploadToImageHost(base64Data, {
-    // 180 days (max supported by imgbb)
+    // 180 days for hosts that support expiration-style parameters
     expiration: 15552000,
   });
 

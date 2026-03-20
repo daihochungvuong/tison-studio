@@ -65,7 +65,7 @@ export function DirectorView() {
   } = useDirectorStore();
   
   // Read from project data (with defaults for when project is not yet loaded)
-  const storyboardStatus = projectData?.storyboardStatus || 'idle';
+  const storyboardStatus = projectData?.storyboardStatus || 'editing';
   const storyboardImage = projectData?.storyboardImage || null;
   const storyboardError = projectData?.storyboardError || null;
   const storyboardConfig = projectData?.storyboardConfig || {
@@ -148,6 +148,7 @@ export function DirectorView() {
     aspectRatio: '16:9' | '9:16';
     resolution: '2K' | '4K';
     styleTokens: string[];
+    visualStyleId?: string;
     characterDescriptions?: string[];
     characterReferenceImages?: string[];
   }) => {
@@ -157,6 +158,10 @@ export function DirectorView() {
       resolution: config.resolution,
       sceneCount: config.sceneCount,
       storyPrompt: config.storyPrompt,
+      visualStyleId: config.visualStyleId,
+      styleTokens: config.styleTokens,
+      characterDescriptions: config.characterDescriptions,
+      characterReferenceImages: config.characterReferenceImages,
     });
     setStoryboardProgress(0);
 
@@ -320,7 +325,13 @@ export function DirectorView() {
     // Legacy screenplay workflow
     switch (screenplayStatus) {
       case "idle":
-        return <ScreenplayInput onGenerateStoryboard={handleGenerateStoryboard} />;
+        // Default: show split-scenes editing view (same as storyboardStatus === 'editing')
+        return (
+          <SplitScenes
+            onBack={() => resetStoryboard()}
+            onGenerateVideos={handleGenerateVideos}
+          />
+        );
 
       case "generating":
         return (
@@ -393,10 +404,7 @@ export function DirectorView() {
         return (
           <div className="flex flex-col gap-4">
             {/* Overall progress */}
-            <GenerationProgress
-              progress={overallProgress}
-              isGenerating={isGenerating}
-            />
+            <GenerationProgress />
 
             <Separator />
 
@@ -495,10 +503,7 @@ export function DirectorView() {
         return (
           <div className="flex flex-col gap-4">
             {/* Overall progress */}
-            <GenerationProgress
-              progress={overallProgress}
-              isGenerating={isGenerating}
-            />
+            <GenerationProgress />
 
             <Separator />
 
@@ -574,6 +579,8 @@ export function DirectorView() {
     }
   };
 
+  const showHeaderStatus = screenplayStatus !== "idle" || storyboardStatus !== "idle";
+
   return (
     <div className="h-full min-w-0 flex flex-col">
       {/* Header */}
@@ -581,8 +588,8 @@ export function DirectorView() {
         <div className="flex items-center justify-between">
           <h2 className="font-semibold text-sm">AI 导演</h2>
           <div className="flex items-center gap-2">
-            {(screenplayStatus !== "idle" || storyboardStatus !== "idle") && (
-              <span className="text-xs text-muted-foreground capitalize">
+            {showHeaderStatus && (
+              <span className={storyboardStatus === "editing" ? "hidden" : "text-xs text-muted-foreground capitalize"}>
                 {storyboardStatus === "generating" && `故事板 ${storyboardProgress}%`}
                 {storyboardStatus === "preview" && "预览"}
                 {storyboardStatus === "splitting" && "切割中..."}
@@ -600,7 +607,7 @@ export function DirectorView() {
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-2 text-xs"
+              className="hidden h-6 px-2 text-xs"
               onClick={() => setActiveTab('settings')}
             >
               <Settings className="h-3 w-3 mr-1" />
@@ -615,7 +622,8 @@ export function DirectorView() {
         {renderContent()}
       </div>
 
-      {/* Step Navigation Footer */}
+      {/* Step Navigation Footer - hidden: storyboard generation workflow no longer used */}
+      {storyboardStatus !== 'editing' && storyboardStatus !== 'idle' && (
       <div className="p-3 pt-2 border-t bg-panel">
         {/* Step indicator */}
         <div className="flex items-center justify-center gap-2 mb-2">
@@ -671,6 +679,7 @@ export function DirectorView() {
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }

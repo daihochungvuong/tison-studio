@@ -58,12 +58,14 @@ export function parseFullScript(fullText: string): {
   
   // 2. 提取大纲（从"大纲："到"人物小传："之间的内容）
   // 支持 Markdown 格式：**大纲：** 或 大纲： 或 【大纲】
-  const outlineMatch = fullText.match(/(?:\*{0,2}大纲[：:]​?\*{0,2}|【大纲】)([\s\S]*?)(?=(?:\*{0,2}人物小传[：:]|【人物|第[一二三四五六七八九十\d]+集))/i);
+  // 末尾 |$ 兜底：无人物小传/无集标记时匹配到文本末尾
+  const outlineMatch = fullText.match(/(?:\*{0,2}大纲[：:]​?\*{0,2}|【大纲】)([\s\S]*?)(?=(?:\*{0,2}人物小传[：:]|【人物|第[一二三四五六七八九十\d]+集|$))/i);
   const outline = outlineMatch ? outlineMatch[1].trim() : '';
   
   // 3. 提取人物小传（从"人物小传："到第一集之前的内容）
   // 支持 Markdown 格式：**人物小传：** 或 人物小传： 或 【人物小传】
-  const characterBiosMatch = fullText.match(/(?:\*{0,2}人物小传[：:]\*{0,2}|【人物小传】)([\s\S]*?)(?=\*{0,2}第[一二三四五六七八九十\d]+集)/i);
+  // 末尾 |$ 兜底：无集标记时匹配到文本末尾
+  const characterBiosMatch = fullText.match(/(?:\*{0,2}人物小传[：:]\*{0,2}|【人物小传】)([\s\S]*?)(?=\*{0,2}第[一二三四五六七八九十\d]+集|$)/i);
   const characterBios = characterBiosMatch ? characterBiosMatch[1].trim() : '';
   
   // 4. 提取时代背景和时间线设定
@@ -164,6 +166,31 @@ function extractTimelineInfo(outline: string, characterBios: string): {
       era = '民国';
     } else if (storyStartYear >= 1840) {
       era = '清末/近代';
+    }
+  }
+  
+  // 4. 无显式年代关键词且无年份时，通过古风术语推断
+  // 仅当 era 仍为默认值 '现代' 且没有年份佐证时才推断
+  if (era === '现代' && !storyStartYear) {
+    // 古代官职/封建制度术语（高置信度）
+    const ancientInstitutionTerms = /城主|王爷|太守|县令|丞相|太子|皇帝|太后|嫔妃|将领|部将|大将军|郡守|侯爵|藩王/;
+    // 武侠/古风术语（中置信度，需多个命中）
+    const ancientCultureTerms = /武功|内力|真气|剑法|刀法|门派|武林|江湖|侠客|大侠|掌门|弟子|轻功|暗器/;
+    // 古代场景术语
+    const ancientSettingTerms = /城楼|客栈|驿馆|城门|官府|衙门|兵营|镖局|酒肆|茶楼|府邸|宫殿/;
+    
+    if (ancientInstitutionTerms.test(fullText)) {
+      era = '古代';
+    } else {
+      // 文化术语 + 场景术语同时出现 → 高置信度古代
+      const hasCulture = ancientCultureTerms.test(fullText);
+      const hasSetting = ancientSettingTerms.test(fullText);
+      if (hasCulture && hasSetting) {
+        era = '古代';
+      } else if (hasCulture) {
+        // 仅有武侠术语，可能是现代武侠，标记为古风
+        era = '古代（推断）';
+      }
     }
   }
   
@@ -687,11 +714,86 @@ function chineseToNumber(chinese: string): number {
 
 /**
  * 从人物小传文本中提取角色信息
+ * 支持两种格式：
+ * 1. 紧凑格式：角色名：年龄：XX身份：... （从 Word/微信复制的无换行文本）
+ * 2. 标准格式：角色名：描述 或 角色名（年龄）：描述
  */
 export function parseCharacterBios(bios: string): ScriptCharacter[] {
+  if (!bios || !bios.trim()) return [];
+  
+  // 检测紧凑格式：角色名：年龄/年两：XX （至少2个条目才认定为紧凑格式）
+  const compactEntryRegex = /([\u4e00-\u9fa5]{2,12})[：:]\s*(?:年龄|年两)[：:]\s*(\d{1,3})/g;
+  const compactMatches = [...bios.matchAll(compactEntryRegex)];
+  
+  if (compactMatches.length >= 2) {
+    return parseCompactBioFormat(bios, compactMatches);
+  }
+  
+  // 标准格式兜底
+  return parseStandardBioFormat(bios);
+}
+
+/**
+ * 紧凑格式解析：角色名：年龄：XX身份：...关键行为：...
+ * 自动剥离段落标记（一、核心主角 等）提取真实角色名
+ */
+function parseCompactBioFormat(bios: string, matches: RegExpMatchArray[]): ScriptCharacter[] {
+  const characters: ScriptCharacter[] = [];
+  let index = 1;
+  
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    let rawName = match[1];
+    const age = match[2];
+    
+    // 剥离段落关键词提取真实角色名
+    const actualName = stripSectionKeywords(rawName);
+    if (!actualName || actualName.length < 2 || actualName.length > 8) continue;
+    
+    // 提取描述：从年龄后到下一个角色条目之前
+    const descStart = match.index! + match[0].length;
+    const descEnd = i < matches.length - 1 ? matches[i + 1].index! : bios.length;
+    let description = bios.slice(descStart, descEnd).trim();
+    
+    // 移除末尾的段落标记（如 "三、反派势力角色"）
+    description = description.replace(/\n?[一二三四五六七八九十\d]+[、.]\s*[\u4e00-\u9fa5]*$/, '').trim();
+    
+    characters.push({
+      id: `char_${index}`,
+      name: actualName,
+      age,
+      role: description.substring(0, 300),
+      personality: extractPersonality(description),
+      traits: extractTraits(description),
+    });
+    index++;
+  }
+  
+  console.log(`[parseCharacterBios] 紧凑格式检测到 ${characters.length} 个角色`);
+  return characters;
+}
+
+/**
+ * 从含段落标记的名字中提取真实角色名
+ * 如 "核心主角萧惊鸿" → "萧惊鸿"，"正面势力角色赵将军" → "赵将军"
+ */
+function stripSectionKeywords(name: string): string {
+  // 1. 移除开头的中文编号：一、 二. 等
+  name = name.replace(/^[一二三四五六七八九十\d]+[、.]\s*/, '');
+  // 2. 移除段落类别关键词
+  name = name.replace(
+    /^(?:核心|主要|正面|反面|反派|次要|重要|关键|群众|正派|其他)(?:势力)?(?:角色|主角|配角|人物)?/,
+    ''
+  ).trim();
+  return name;
+}
+
+/**
+ * 标准格式解析（原逻辑）：角色名：描述 或 角色名（年龄）：描述
+ */
+function parseStandardBioFormat(bios: string): ScriptCharacter[] {
   const characters: ScriptCharacter[] = [];
   
-  // 匹配格式：角色名：描述 或 角色名（年龄）：描述
   const charRegex = /([^：:\n，,]+?)(?:[（\(](\d+岁?)[）\)])?[：:]\s*([^\n]+(?:\n(?![^：:\n]+[：:])[^\n]+)*)/g;
   const matches = [...bios.matchAll(charRegex)];
   
@@ -703,6 +805,8 @@ export function parseCharacterBios(bios: string): ScriptCharacter[] {
     
     // 跳过非角色内容
     if (name.length > 10 || name.match(/^[第一二三四五六七八九十\d]/)) continue;
+    // 跳过属性标签和补充说明
+    if (/^(?:年龄|身份|性格|补充|注|备注|核心特质|关键行为)$/.test(name)) continue;
     
     characters.push({
       id: `char_${index}`,
