@@ -1,3 +1,6 @@
+# 完整的安装前帮助可以看这里
+https://kvodb27hf3.feishu.cn/wiki/JjSmwf173iN3fqkjXakcGbvTnEf?from=from_copylink
+
 # 🎬 魔因漫创 — 基本工作流教程
 
 > 从剧本到成片的完整创作流程指南
