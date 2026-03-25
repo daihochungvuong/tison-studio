@@ -2,7 +2,8 @@
 // Licensed under AGPL-3.0-or-later. See LICENSE for details.
 // Commercial licensing available. See COMMERCIAL_LICENSE.md.
 import { getFeatureConfig } from "@/lib/ai/feature-router";
-import { saveVideoToLocal } from "@/lib/image-storage";
+import { uploadToImageHost, isImageHostConfigured } from "@/lib/image-host";
+import { saveVideoToLocal, readImageAsBase64 } from "@/lib/image-storage";
 import { normalizeUrl } from "./use-image-generation";
 import { useAPIConfigStore } from "@/stores/api-config-store";
 import { retryOperation } from "@/lib/utils/retry";
@@ -105,14 +106,12 @@ export async function convertToHttpUrl(
   }
   
   // For base64/local data URLs, upload to image host
-  const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
   if (!isImageHostConfigured()) {
     throw new Error('图床未配置，请在设置中配置图床 API Key');
   }
 
   let imageData = url;
   if (url.startsWith('local-image://')) {
-    const { readImageAsBase64 } = await import('@/lib/image-storage');
     const base64 = await readImageAsBase64(url);
     if (!base64) throw new Error(`无法读取本地文件: ${url.substring(0, 40)}`);
     imageData = base64;
@@ -383,7 +382,6 @@ async function ensureMinImageSize(
     const upscaledDataUrl = canvas.toDataURL('image/png');
 
     // 重新上传到图床
-    const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
     if (!isImageHostConfigured()) {
       console.warn('[VideoGen] Image host not configured, cannot re-upload upscaled image');
       return imageUrl;

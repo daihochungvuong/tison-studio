@@ -64,8 +64,9 @@ import { useAPIConfigStore } from "@/stores/api-config-store";
 import { parseApiKeys } from "@/lib/api-key-manager";
 import { getFeatureConfig, getFeatureNotConfiguredMessage } from "@/lib/ai/feature-router";
 import { submitGridImageRequest } from "@/lib/ai/image-generator";
+import { uploadToImageHost, isImageHostConfigured } from "@/lib/image-host";
 import { saveVideoToLocal, readImageAsBase64 } from '@/lib/image-storage';
-import { callVideoGenerationApi, isContentModerationError } from './use-video-generation';
+import { callVideoGenerationApi, extractLastFrameFromVideo, isContentModerationError } from './use-video-generation';
 import { persistSceneImage } from '@/lib/utils/image-persist';
 import {
   Select,
@@ -601,8 +602,6 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
     setIsExtractingFrame(true);
     
     try {
-      const { extractLastFrameFromVideo } = await import('./use-video-generation');
-      
       // 提取最后一帧
       const lastFrameBase64 = await extractLastFrameFromVideo(scene.videoUrl, 0.1);
       if (!lastFrameBase64) {
@@ -1667,8 +1666,6 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
         
         // For base64 or local images, we need to upload to image host
         try {
-          const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
-          
           // Check if image host is configured
           if (!isImageHostConfigured()) {
             console.warn('[SplitScenes] Image host not configured. Please configure an image host in settings.');
@@ -1796,8 +1793,6 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       if (shouldExtractEndFrame) {
         (async () => {
           try {
-            const { extractLastFrameFromVideo } = await import('./use-video-generation');
-            
             const lastFrameBase64 = await extractLastFrameFromVideo(finalVideoUrl, 0.1);
             if (!lastFrameBase64) {
               console.warn('[SplitScenes] Failed to extract last frame from video');
@@ -2780,7 +2775,6 @@ export function SplitScenes({ onBack, onGenerateVideos }: SplitScenesProps) {
       // 回填到各分镜并自动保存到素材库
       // 同时上传切割后的图片到图床，避免视频生成时再次上传
       const folderId = getImageFolderId();
-      const { uploadToImageHost, isImageHostConfigured } = await import('@/lib/image-host');
       const imageHostConfigured = isImageHostConfigured();
       
       // 回填：根据任务类型决定更新首帧还是尾帧

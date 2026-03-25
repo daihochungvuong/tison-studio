@@ -796,6 +796,81 @@ export function convertToScriptCharacters(
 }
 
 /**
+ * 角色恢复兜底：优先保留带名字的角色，并去重
+ */
+function cloneScriptCharactersForRecovery(
+  characters: ScriptCharacter[] | undefined,
+  source: 'calibrated' | 'existing' | 'series-meta' | 'raw',
+): ScriptCharacter[] {
+  if (!Array.isArray(characters) || characters.length === 0) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const recovered: ScriptCharacter[] = [];
+
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
+    const name = character?.name?.trim();
+    if (!name) continue;
+
+    const key = (character.id && character.id.trim()) || name;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    recovered.push({
+      ...character,
+      id: character.id || `char_recovered_${index + 1}`,
+      name,
+      tags: Array.isArray(character.tags) && character.tags.length > 0
+        ? [...new Set(character.tags.filter(Boolean))]
+        : source === 'raw'
+          ? ['minor', 'recovered']
+          : character.tags,
+    });
+  }
+
+  return recovered;
+}
+
+export function resolveSafeScriptCharacters(
+  preferredCharacters: ScriptCharacter[],
+  options?: {
+    existingCharacters?: ScriptCharacter[];
+    seriesMetaCharacters?: ScriptCharacter[];
+    rawCharacters?: ScriptCharacter[];
+  },
+): {
+  characters: ScriptCharacter[];
+  source: 'calibrated' | 'existing' | 'series-meta' | 'raw' | 'empty';
+} {
+  const candidates: Array<{
+    source: 'calibrated' | 'existing' | 'series-meta' | 'raw';
+    characters?: ScriptCharacter[];
+  }> = [
+    { source: 'calibrated', characters: preferredCharacters },
+    { source: 'existing', characters: options?.existingCharacters },
+    { source: 'series-meta', characters: options?.seriesMetaCharacters },
+    { source: 'raw', characters: options?.rawCharacters },
+  ];
+
+  for (const candidate of candidates) {
+    const characters = cloneScriptCharactersForRecovery(candidate.characters, candidate.source);
+    if (characters.length > 0) {
+      return {
+        characters,
+        source: candidate.source,
+      };
+    }
+  }
+
+  return {
+    characters: [],
+    source: 'empty',
+  };
+}
+
+/**
  * 按重要性排序角色
  */
 export function sortByImportance(characters: CalibratedCharacter[]): CalibratedCharacter[] {

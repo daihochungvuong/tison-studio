@@ -48,6 +48,7 @@ import {
   convertToScriptCharacters,
   sortByImportance,
   extractAllCharactersFromEpisodes,
+  resolveSafeScriptCharacters,
 } from "@/lib/script/character-calibrator";
 import { findCharacterByDescription } from "@/lib/script/ai-character-finder";
 import { findSceneByDescription } from "@/lib/script/ai-scene-finder";
@@ -596,26 +597,40 @@ export function ScriptView() {
           
           // 转换并更新角色列表
           const sortedChars = sortByImportance(calibResult.characters);
-          const newCharacters = convertToScriptCharacters(sortedChars, undefined, promptLanguage);
+          const currentProject = useScriptStore.getState().projects[projectId];
+          const currentScriptData = currentProject?.scriptData;
+          const existingCharacters = currentScriptData?.characters || result.scriptData.characters;
+          const resolvedCharacters = resolveSafeScriptCharacters(
+            convertToScriptCharacters(sortedChars, existingCharacters, promptLanguage),
+            {
+              existingCharacters,
+              seriesMetaCharacters: currentProject?.seriesMeta?.characters,
+              rawCharacters: result.scriptData.characters,
+            },
+          );
+          const newCharacters = resolvedCharacters.characters;
           
           // 从 store 获取最新的 scriptData（避免覆盖分镜生成的 AI 视角数据）
-          const currentScriptData = useScriptStore.getState().projects[projectId]?.scriptData;
           if (currentScriptData) {
             setScriptData(projectId, {
               ...currentScriptData,  // 使用最新数据，保留 scenes.viewpoints
               characters: newCharacters,
             });
           }
+          if (resolvedCharacters.source !== 'calibrated') {
+            console.warn(`[ScriptView] AI character calibration returned empty result, recovered characters from ${resolvedCharacters.source}.`);
+            toast.warning('AI 角色校准返回空结果，已保留现有角色，避免剧本主数据被清空');
+          }
           
           setCharacterCalibrationStatus('completed');
           setCharacterCalibrationResult({
             filteredCount: calibResult.filteredWords.length,
             mergedCount: calibResult.mergeRecords.length,
-            finalCount: sortedChars.length,
+            finalCount: newCharacters.length,
           });
           
           toast.success(
-            `角色校准完成: ${sortedChars.length} 个有效角色, 过滤 ${calibResult.filteredWords.length} 个非角色词, 合并 ${calibResult.mergeRecords.length} 组重复`
+            `角色校准完成: ${newCharacters.length} 个有效角色, 过滤 ${calibResult.filteredWords.length} 个非角色词, 合并 ${calibResult.mergeRecords.length} 组重复`
           );
           
           console.log('[ScriptView] 角色校准结果:', calibResult.analysisNotes);
@@ -1026,6 +1041,17 @@ export function ScriptView() {
       
       // 不再硬编码过滤，由 calibrator 根据严格度统一处理
       let newCharacters = convertToScriptCharacters(sortedChars, rawCharacters, promptLanguage);
+      if (newCharacters.length === 0) {
+        const currentProject = useScriptStore.getState().projects[projectId];
+        const resolvedCalibrationCharacters = resolveSafeScriptCharacters([], {
+          existingCharacters: currentProject?.scriptData?.characters,
+          seriesMetaCharacters: currentProject?.seriesMeta?.characters,
+          rawCharacters,
+        });
+        newCharacters = resolvedCalibrationCharacters.characters;
+        console.warn(`[handleCalibrateCharacters] AI character calibration returned empty result, recovered characters from ${resolvedCalibrationCharacters.source}.`);
+        toast.warning('AI 角色校准返回空结果，已回退到现有角色列表，请确认后保存');
+      }
       
       console.log('[ScriptView] 角色校准结果:', calibResult.analysisNotes);
       
@@ -1192,13 +1218,20 @@ export function ScriptView() {
     keptCharacters: import("@/types/script").ScriptCharacter[],
     filteredCharacters: FilteredCharacterRecord[]
   ) => {
-    const currentScriptData = useScriptStore.getState().projects[projectId]?.scriptData;
+    const currentProject = useScriptStore.getState().projects[projectId];
+    const currentScriptData = currentProject?.scriptData;
+    const safeCharacters = keptCharacters.length > 0
+      ? keptCharacters
+      : resolveSafeScriptCharacters([], {
+          existingCharacters: currentProject?.scriptData?.characters,
+          seriesMetaCharacters: currentProject?.seriesMeta?.characters,
+        }).characters;
     if (currentScriptData) {
       setScriptData(projectId, {
         ...currentScriptData,
-        characters: keptCharacters,
+        characters: safeCharacters,
       });
-      console.log('[handleConfirmCalibration] 已保存到 store，角色数:', keptCharacters.length);
+      console.log('[handleConfirmCalibration] 已保存到 store，角色数:', safeCharacters.length);
     }
     setLastFilteredCharacters(projectId, filteredCharacters);
     setScriptCalibrationState(projectId, {
@@ -1206,14 +1239,14 @@ export function ScriptView() {
       pendingCalibrationCharacters: null,
       pendingFilteredCharacters: [],
     });
-    toast.success(`角色校准确认: ${keptCharacters.length} 个角色已保存`);
+    toast.success(`角色校准确认: ${safeCharacters.length} 个角色已保存`);
     
     // P2b: 校准回写 SeriesMeta
     try {
       const store = useScriptStore.getState();
       const meta = store.projects[projectId]?.seriesMeta;
       if (meta) {
-        const updates = syncToSeriesMeta(meta, 'character', { characters: keptCharacters });
+        const updates = syncToSeriesMeta(meta, 'character', { characters: safeCharacters });
         if (Object.keys(updates).length > 0) {
           store.updateSeriesMeta(projectId, updates);
           console.log('[handleConfirmCalibration] SeriesMeta 角色回写完成');

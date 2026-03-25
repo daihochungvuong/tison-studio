@@ -181,10 +181,29 @@ const defaultProjectData = (): ScriptProjectData => ({
   seriesMeta: null,
 });
 
-const normalizeScriptProjectData = (projectData: any): ScriptProjectData => {
+const pendingCharacterRecoveryProjectIds = new Set<string>();
+
+const cloneScriptCharacters = (characters: ScriptCharacter[] | undefined): ScriptCharacter[] => {
+  if (!Array.isArray(characters) || characters.length === 0) {
+    return [];
+  }
+
+  return characters
+    .filter((character): character is ScriptCharacter => Boolean(character?.name))
+    .map((character, index) => ({
+      ...character,
+      id: character.id || `char_recovered_${index + 1}`,
+      name: character.name.trim(),
+      tags: Array.isArray(character.tags)
+        ? [...new Set(character.tags.filter(Boolean))]
+        : character.tags,
+    }));
+};
+
+const normalizeScriptProjectData = (projectId: string, projectData: any): ScriptProjectData => {
   const defaults = defaultProjectData();
   const defaultCalibration = defaultCalibrationState();
-  return {
+  const normalizedProject: ScriptProjectData = {
     ...defaults,
     ...projectData,
     inputDraft: {
@@ -206,6 +225,42 @@ const normalizeScriptProjectData = (projectData: any): ScriptProjectData => {
         : [],
     },
   };
+
+  const recoveredCharacters = cloneScriptCharacters(normalizedProject.seriesMeta?.characters);
+  if (
+    normalizedProject.scriptData &&
+    (!Array.isArray(normalizedProject.scriptData.characters) || normalizedProject.scriptData.characters.length === 0) &&
+    recoveredCharacters.length > 0
+  ) {
+    normalizedProject.scriptData = {
+      ...normalizedProject.scriptData,
+      characters: recoveredCharacters,
+    };
+    pendingCharacterRecoveryProjectIds.add(projectId);
+  }
+
+  return normalizedProject;
+};
+
+const flushRecoveredCharactersToDisk = (state: ScriptStore | undefined) => {
+  if (!state || pendingCharacterRecoveryProjectIds.size === 0) {
+    return;
+  }
+
+  for (const projectId of Array.from(pendingCharacterRecoveryProjectIds)) {
+    const project = state.projects[projectId];
+    const characters = cloneScriptCharacters(project?.scriptData?.characters);
+    if (!project?.scriptData || characters.length === 0) {
+      pendingCharacterRecoveryProjectIds.delete(projectId);
+      continue;
+    }
+
+    state.setScriptData(projectId, {
+      ...project.scriptData,
+      characters,
+    });
+    pendingCharacterRecoveryProjectIds.delete(projectId);
+  }
 };
 
 export const useScriptStore = create<ScriptStore>()(
@@ -996,6 +1051,15 @@ export const useScriptStore = create<ScriptStore>()(
             ...state.projects,
             [projectId]: {
               ...state.projects[projectId],
+              scriptData:
+                state.projects[projectId]?.scriptData &&
+                (!state.projects[projectId].scriptData.characters || state.projects[projectId].scriptData.characters.length === 0) &&
+                meta.characters?.length
+                  ? {
+                      ...state.projects[projectId].scriptData,
+                      characters: cloneScriptCharacters(meta.characters),
+                    }
+                  : state.projects[projectId]?.scriptData ?? null,
               seriesMeta: meta,
               updatedAt: Date.now(),
             },
@@ -1013,6 +1077,15 @@ export const useScriptStore = create<ScriptStore>()(
               ...state.projects,
               [projectId]: {
                 ...project,
+                scriptData:
+                  project.scriptData &&
+                  (!project.scriptData.characters || project.scriptData.characters.length === 0) &&
+                  updates.characters?.length
+                    ? {
+                        ...project.scriptData,
+                        characters: cloneScriptCharacters(updates.characters),
+                      }
+                    : project.scriptData,
                 seriesMeta: { ...project.seriesMeta, ...updates },
                 updatedAt: Date.now(),
               },
@@ -1039,7 +1112,7 @@ export const useScriptStore = create<ScriptStore>()(
         if (persisted.projects && typeof persisted.projects === 'object') {
           const normalizedProjects: Record<string, ScriptProjectData> = {};
           for (const [projectId, projectData] of Object.entries(persisted.projects)) {
-            normalizedProjects[projectId] = normalizeScriptProjectData(projectData);
+            normalizedProjects[projectId] = normalizeScriptProjectData(projectId, projectData);
           }
           return {
             ...current,
@@ -1055,8 +1128,17 @@ export const useScriptStore = create<ScriptStore>()(
         return {
           ...current,
           activeProjectId: pid,
-          projects: { ...current.projects, [pid]: normalizeScriptProjectData(projectData) },
+          projects: { ...current.projects, [pid]: normalizeScriptProjectData(pid, projectData) },
         };
+      },
+      onRehydrateStorage: () => (state, error) => {
+        if (error || pendingCharacterRecoveryProjectIds.size === 0) {
+          return;
+        }
+
+        queueMicrotask(() => {
+          flushRecoveredCharactersToDisk(state as ScriptStore | undefined);
+        });
       },
     }
   )

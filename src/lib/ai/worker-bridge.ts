@@ -18,6 +18,9 @@ import type {
   SceneCompletedEvent,
   SceneFailedEvent,
 } from '@opencut/ai-core';
+import { useMediaStore } from '@/stores/media-store';
+import { useProjectStore } from '@/stores/project-store';
+import { useDirectorStore } from '@/stores/director-store';
 
 type PromiseCallbacks = {
   resolve: (value: unknown) => void;
@@ -337,11 +340,6 @@ export class AIWorkerBridge {
     console.log(`[WorkerBridge] Scene ${sceneId} completed, injecting media...`);
     
     try {
-      // Import stores dynamically to avoid circular dependencies
-      const { useMediaStore } = await import('@/stores/media-store');
-      const { useProjectStore } = await import('@/stores/project-store');
-      const { useDirectorStore } = await import('@/stores/director-store');
-      
       const projectId = useProjectStore.getState().activeProject?.id;
       if (!projectId) {
         console.error('[WorkerBridge] No active project');
@@ -393,8 +391,6 @@ export class AIWorkerBridge {
     console.log(`[WorkerBridge] Scene ${sceneId} failed:`, error);
     
     try {
-      const { useDirectorStore } = await import('@/stores/director-store');
-      
       // Update director store
       const directorStore = useDirectorStore.getState();
       directorStore.onSceneFailed(sceneId, error);
