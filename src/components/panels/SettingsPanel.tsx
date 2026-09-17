@@ -1048,7 +1048,7 @@ export function SettingsPanel() {
 
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
-                <p className="text-sm font-medium">Vidtory Drama Studio</p>
+                <p className="text-sm font-medium">AI Tison Studio</p>
                 <p className="text-xs mt-1">v{appVersion} · AI-powered anime/film creation tool</p>
               </div>
             </div>
@@ -1194,7 +1194,7 @@ export function SettingsPanel() {
 
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
-                <p className="text-sm font-medium">Vidtory Drama Studio</p>
+                <p className="text-sm font-medium">AI Tison Studio</p>
                 <p className="text-xs mt-1">v{appVersion} · AI-powered anime/film creation tool</p>
               </div>
             </div>
@@ -1314,7 +1314,7 @@ export function SettingsPanel() {
 
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
-                <p className="text-sm font-medium">Vidtory Drama Studio</p>
+                <p className="text-sm font-medium">AI Tison Studio</p>
                 <p className="text-xs mt-1">v{appVersion} · AI-powered anime/film creation tool</p>
               </div>
             </div>
@@ -1583,7 +1583,7 @@ export function SettingsPanel() {
 
               {/* About */}
               <div className="text-center py-8 text-muted-foreground border-t border-border">
-                <p className="text-sm font-medium">Vidtory Drama Studio</p>
+                <p className="text-sm font-medium">AI Tison Studio</p>
                 <p className="text-xs mt-1">v{appVersion} · AI-powered anime/film creation tool</p>
               </div>
             </div>

@@ -29,7 +29,7 @@ interface ProjectStore {
 // Default project for desktop app
 const DEFAULT_PROJECT: Project = {
   id: "default-project",
-  name: "Vidtory Project",
+  name: "AI Tison Project",
   createdAt: Date.now(),
   updatedAt: Date.now(),
 };

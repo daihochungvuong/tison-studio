@@ -282,8 +282,8 @@ export function Dashboard() {
             <Aperture className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-foreground tracking-wide">Vidtory</h1>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Drama Studio</p>
+            <h1 className="text-lg font-bold text-foreground tracking-wide">AI Tison</h1>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Studio</p>
           </div>
         </div>
         
