@@ -43,6 +43,8 @@ const PLATFORM_PRESETS: Array<{
   services: string[];
   models: string[];
   recommended?: boolean;
+  requiresBaseUrl?: boolean;
+  requiresApiKey?: boolean;
 }> = [
   {
     platform: "gemini",
@@ -67,6 +69,28 @@ const PLATFORM_PRESETS: Array<{
     description: "Custom OpenAI Compatible API Provider",
     services: [],
     models: [],
+    requiresBaseUrl: true,
+    requiresApiKey: true,
+  },
+  {
+    platform: "volcengine",
+    name: "Volcengine Seedance",
+    baseUrl: "",
+    description: "Doubao Seedance video generation via a Volcengine-compatible gateway",
+    services: ["Video Gen", "Vision"],
+    models: ["doubao-seedance-1-5-pro-251215"],
+    requiresBaseUrl: true,
+    requiresApiKey: true,
+  },
+  {
+    platform: "forge",
+    name: "Stable Diffusion Forge",
+    baseUrl: "http://127.0.0.1:7860",
+    description: "Local Stable Diffusion WebUI Forge image generation",
+    services: ["Image Gen"],
+    models: ["sdxl-local"],
+    requiresBaseUrl: true,
+    requiresApiKey: false,
   },
 ];
 
@@ -92,6 +116,7 @@ export function AddProviderDialog({
   // Get selected preset
   const selectedPreset = PLATFORM_PRESETS.find((p) => p.platform === platform);
   const isCustom = platform === "custom";
+  const requiresBaseUrl = selectedPreset?.requiresBaseUrl ?? false;
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -125,11 +150,11 @@ export function AddProviderDialog({
       toast.error("请输入Name");
       return;
     }
-    if (isCustom && !baseUrl.trim()) {
-      toast.error("Custom platform requires Base URL");
+    if (requiresBaseUrl && !baseUrl.trim()) {
+      toast.error(`${selectedPreset?.name || "This platform"} requires Base URL`);
       return;
     }
-    if (!apiKey.trim()) {
+    if (selectedPreset?.requiresApiKey !== false && !apiKey.trim()) {
       toast.error("Please enter API Key");
       return;
     }
@@ -201,15 +226,27 @@ export function AddProviderDialog({
             />
           </div>
 
-          {/* Base URL (only for custom or editable) */}
+          {/* Base URL (required for custom and Volcengine gateways) */}
           {(isCustom || platform) && (
             <div className="space-y-2">
-              <Label>Base URL {!isCustom && "(Optional)"}</Label>
+              <Label>Base URL {!requiresBaseUrl && "(Optional)"}</Label>
               <Input
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder={isCustom ? "https://api.example.com/v1" : ""}
+                placeholder={
+                  platform === "volcengine"
+                    ? "https://your-gateway.example.com"
+                    : isCustom
+                      ? "https://api.example.com/v1"
+                      : ""
+                }
               />
+              {platform === "volcengine" && (
+                <p className="text-xs text-muted-foreground">
+                  Use a gateway that exposes <code>/volc/v1/contents/generations/tasks</code>.
+                  Native Ark endpoints may require a separate adapter.
+                </p>
+              )}
             </div>
           )}
 
@@ -224,7 +261,9 @@ export function AddProviderDialog({
               className="font-mono"
             />
             <p className="text-xs text-muted-foreground">
-              Supports multiple keys, separated by comma
+            {selectedPreset?.requiresApiKey === false
+              ? "Optional for local providers"
+              : "Supports multiple keys, separated by comma"}
             </p>
           </div>
 

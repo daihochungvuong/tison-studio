@@ -120,6 +120,7 @@ function parseOptionKey(key: string): { providerIdOrPlatform: string; model: str
 
 const DEFAULT_PLATFORM_CAPABILITIES: Record<string, ModelCapability[]> = {
   gemini: ["text", "vision", "image_generation", "video_generation"],
+  forge: ["image_generation"],
 };
 
 /**
@@ -149,6 +150,10 @@ function providerSupportsCapability(
   required?: ModelCapability
 ): boolean {
   if (!required) return true;
+
+  if (provider.platform === 'forge') {
+    return required === 'image_generation';
+  }
 
   const explicitCaps = provider.capabilities && provider.capabilities.length > 0
     ? provider.capabilities

@@ -185,6 +185,10 @@ async function generateImage(
     promptPreview: params.prompt.substring(0, 100) + '...',
   });
 
+  if (featureConfig.platform === 'forge') {
+    return submitViaForge(params, model, baseUrl, aspectRatio, resolution);
+  }
+
   // Gemini 等Model通过 chat completions 生图
   if (apiFormat === 'openai_chat') {
     return submitViaChatCompletions(
@@ -228,6 +232,60 @@ async function generateImage(
   }
 
   throw new Error('Invalid API response');
+}
+
+async function submitViaForge(
+  params: ImageGenerationParams,
+  model: string,
+  baseUrl: string,
+  aspectRatio: string,
+  resolution: string,
+): Promise<ImageGenerationResult> {
+  const dimensions = getTargetDimensions(aspectRatio, resolution);
+  const maxDimension = 1536;
+  const width = params.width || Math.min(dimensions?.width || 1024, maxDimension);
+  const height = params.height || Math.min(dimensions?.height || 1024, maxDimension);
+  const referenceImage = params.referenceImages?.find((image) => image.startsWith('data:image/'));
+  const endpoint = `${baseUrl}/sdapi/v1/${referenceImage ? 'img2img' : 'txt2img'}`;
+  const payload: Record<string, unknown> = {
+    prompt: params.prompt,
+    negative_prompt: params.negativePrompt || '',
+    width,
+    height,
+    steps: 28,
+    sampler_name: 'DPM++ 2M Karras',
+    batch_size: 1,
+    n_iter: 1,
+  };
+
+  if (referenceImage) {
+    payload.init_images = [referenceImage.replace(/^data:image\/[^;]+;base64,/, '')];
+    payload.denoising_strength = 0.65;
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(`Forge image API error (${response.status}): ${responseText.substring(0, 300)}`);
+  }
+
+  let data: { images?: unknown };
+  try {
+    data = JSON.parse(responseText) as { images?: unknown };
+  } catch {
+    throw new Error(`Forge returned invalid JSON: ${responseText.substring(0, 200)}`);
+  }
+  const image = Array.isArray(data.images) && typeof data.images[0] === 'string'
+    ? data.images[0]
+    : null;
+  if (!image) {
+    throw new Error(`Forge returned no image for model "${model}"`);
+  }
+  return { imageUrl: image.startsWith('data:') ? image : `data:image/png;base64,${image}` };
 }
 
 /**
